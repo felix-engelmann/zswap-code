@@ -3,5 +3,6 @@ extern crate rand;
 extern crate lazy_static;
 
 pub mod ota;
+pub mod zswap;
 pub mod poseidon;
 pub mod primitives;

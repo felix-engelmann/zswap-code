@@ -35,7 +35,7 @@ pub trait OneTimeAccount {
         r: &Self::Randomness,
         rng: &mut R,
     ) -> Self::Ciphertext;
-    fn recieve(
+    fn receive(
         note: &Self::Note,
         ciph: &Self::Ciphertext,
         sk: &Self::SecretKey,
@@ -194,7 +194,7 @@ impl<P: ZSwapParameters> OneTimeAccount for ZSwapOTA<P> {
         P::Encrypt::encrypt(pk_enc, &message, rng)
     }
 
-    fn recieve(
+    fn receive(
         note: &Self::Note,
         ciphertext: &Self::Ciphertext,
         sk: &Self::SecretKey,
