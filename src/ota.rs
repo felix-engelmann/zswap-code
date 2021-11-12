@@ -3,12 +3,12 @@ use ark_ff::bytes::{FromBytes, ToBytes};
 use ark_ff::fields::{Field, PrimeField};
 use ark_ff::UniformRand;
 use ark_r1cs_std::alloc::{AllocVar, AllocationMode};
-use ark_r1cs_std::bits::uint64::UInt64;
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_relations;
 use ark_relations::r1cs::{Namespace, SynthesisError};
 use rand::{CryptoRng, Rng};
 use std::borrow::Borrow;
+use std::cmp::Ordering;
 use std::io::{self, Cursor, Read, Write};
 use std::marker::PhantomData;
 
@@ -277,18 +277,19 @@ impl<F: PrimeField> AllocVar<Randomness<F>, F> for RandomnessVar<F> {
     }
 }
 
-pub struct AttributesVar<F: Field> {
-    pub value: UInt64<F>,
-    pub type_: UInt64<F>,
+pub struct AttributesVar<F: PrimeField> {
+    pub value: FpVar<F>,
+    pub type_: FpVar<F>,
 }
 
 impl<F: PrimeField> AttributesVar<F> {
     fn as_field(&self) -> Result<FpVar<F>, SynthesisError> {
-        unimplemented!()
+        let two_pow_64 = FpVar::<F>::Constant((u64::MAX as u128 + 1).into());
+        Ok(self.value.clone() * two_pow_64 + self.type_.clone())
     }
 }
 
-impl<F: Field> AllocVar<Attributes, F> for AttributesVar<F> {
+impl<F: PrimeField> AllocVar<Attributes, F> for AttributesVar<F> {
     fn new_variable<U: Borrow<Attributes>>(
         cs: impl Into<Namespace<F>>,
         f: impl FnOnce() -> Result<U, SynthesisError>,
@@ -296,18 +297,20 @@ impl<F: Field> AllocVar<Attributes, F> for AttributesVar<F> {
     ) -> Result<Self, SynthesisError> {
         let cs = cs.into().cs();
         f().and_then(|a| {
-            Ok(AttributesVar {
-                value: UInt64::<F>::new_variable(
-                    ark_relations::ns!(cs, "value"),
-                    || Ok(a.borrow().value),
-                    mode,
-                )?,
-                type_: UInt64::<F>::new_variable(
-                    ark_relations::ns!(cs, "type"),
-                    || Ok(a.borrow().type_),
-                    mode,
-                )?,
-            })
+            let two_pow_64 = FpVar::<F>::Constant((u64::MAX as u128 + 1).into());
+            let value = FpVar::<F>::new_variable(
+                ark_relations::ns!(cs, "value"),
+                || Ok(F::from(a.borrow().value)),
+                mode,
+            )?;
+            value.enforce_cmp(&two_pow_64, Ordering::Less, false)?;
+            let type_ = FpVar::<F>::new_variable(
+                ark_relations::ns!(cs, "type"),
+                || Ok(F::from(a.borrow().type_)),
+                mode,
+            )?;
+            type_.enforce_cmp(&two_pow_64, Ordering::Less, false)?;
+            Ok(AttributesVar { value, type_ })
         })
     }
 }
@@ -352,4 +355,19 @@ impl<P: ZSwapGadgetParameters, P1: ZSwapParameters<F = P::F>> OTAGadget<ZSwapOTA
         let domain_sep_invalidator = FpVar::Constant(ZSwapOTA::<P1>::DOMAIN_SEP_INVALIDATOR.into());
         P::Hash::compress(params, &domain_sep_invalidator, &c1)
     }
+}
+
+pub struct DefaultParameters;
+
+impl ZSwapParameters for DefaultParameters {
+    type F = ::ark_bls12_381::Fq;
+    type Hash = crate::poseidon::Poseidon;
+    type Commit = crate::poseidon::Poseidon;
+    type Encrypt = crate::primitives::ECIES;
+}
+
+impl ZSwapGadgetParameters for DefaultParameters {
+    type F = ::ark_bls12_381::Fq;
+    type Hash = crate::poseidon::Poseidon;
+    type Commit = crate::poseidon::Poseidon;
 }
