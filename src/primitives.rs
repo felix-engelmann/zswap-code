@@ -1,5 +1,5 @@
 use ark_relations::r1cs::SynthesisError;
-use rand::{CryptoRng, Rng};
+use rand::{CryptoRng, Rng, thread_rng};
 
 pub trait EncryptionScheme {
     type SecretKey;
@@ -40,6 +40,7 @@ where
     }
 }
 
+
 pub trait CommitmentSchemeGadget<F> {
     type ParametersVar;
 
@@ -55,4 +56,36 @@ where
     fn commit(params: &Self::ParametersVar, (a, b): (&F, &F), r: &F) -> Result<F, SynthesisError> {
         Self::compress(params, &Self::compress(params, a, b)?, r)
     }
+}
+
+
+type Ciphertext = Vec<u8>;
+
+impl EncryptionScheme for Ciphertext {
+    type SecretKey = [u8; 32];
+    type PublicKey = [u8; 65];
+
+    fn keygen<R: Rng + CryptoRng + ?Sized>(rng: &mut R) -> (Self::PublicKey, Self::SecretKey) {
+        let (sk,pk) = ecies::utils::generate_keypair();
+        (pk.serialize(), sk.serialize())
+    }
+
+    fn encrypt<R: Rng + CryptoRng + ?Sized>(
+        to: &Self::PublicKey,
+        msg: &[u8],
+        rng: &mut R,
+    ) -> Vec<u8> {
+        ecies::encrypt(to, msg).expect("encryption must succeed")
+    }
+    fn decrypt(with: &Self::SecretKey, ciph: &[u8]) -> Option<Vec<u8>> {
+        ecies::decrypt(with, ciph).ok()
+    }
+}
+
+#[test]
+fn eciestest() {
+    let mut rng = thread_rng();
+    let (pk, sk) = Ciphertext::keygen(&mut rng);
+    let c = Ciphertext::encrypt(&pk,&"bla".as_bytes(), &mut rng);
+    assert_eq!(Ciphertext::decrypt(&sk, &c).unwrap(), "bla".as_bytes())
 }

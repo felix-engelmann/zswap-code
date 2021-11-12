@@ -27,6 +27,8 @@ ark-sponge = { version = "^0.3.0", features = ["r1cs", "std"] }
 rand = "*"
 lazy_static = "*"
 
+ecies = "0.2.1"
+
 # Bring forward compression functions over fields from next arkworks release.
 [patch.crates-io]
 ark-crypto-primitives = { git = "https://github.com/arkworks-rs/crypto-primitives" }
