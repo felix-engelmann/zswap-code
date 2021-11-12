@@ -20,7 +20,7 @@ pub trait OneTimeAccount {
     type Attributes;
     type Note;
     type Ciphertext;
-    type Invalidator;
+    type Nullifier;
 
     fn keygen<R: Rng + CryptoRng + ?Sized>(rng: &mut R) -> (Self::PublicKey, Self::SecretKey);
     fn derive_public_key(sk: &Self::SecretKey) -> Self::PartialPublicKey;
@@ -40,7 +40,7 @@ pub trait OneTimeAccount {
         ciph: &Self::Ciphertext,
         sk: &Self::SecretKey,
     ) -> Option<(Self::Attributes, Self::Randomness)>;
-    fn tag_eval(sk: &Self::SecretKey, r: &Self::Randomness) -> Self::Invalidator;
+    fn nul_eval(sk: &Self::SecretKey, r: &Self::Randomness) -> Self::Nullifier;
 }
 
 pub trait OTAGadget<OTA: OneTimeAccount, F: Field> {
@@ -52,7 +52,7 @@ pub trait OTAGadget<OTA: OneTimeAccount, F: Field> {
     type Randomness: AllocVar<OTA::Randomness, F>;
     type Attributes: AllocVar<OTA::Attributes, F>;
     type Note: AllocVar<OTA::Note, F>;
-    type Invalidator: AllocVar<OTA::Invalidator, F>;
+    type Nullifier: AllocVar<OTA::Nullifier, F>;
 
     fn derive_public_key(
         params: &Self::KeyDeriveParams,
@@ -64,11 +64,11 @@ pub trait OTAGadget<OTA: OneTimeAccount, F: Field> {
         attribs: &Self::Attributes,
         r: &Self::Randomness,
     ) -> Result<Self::Note, SynthesisError>;
-    fn tag_eval(
+    fn nul_eval(
         params: &Self::TagEvalParams,
         sk: &Self::SecretKey,
         r: &Self::Randomness,
-    ) -> Result<Self::Invalidator, SynthesisError>;
+    ) -> Result<Self::Nullifier, SynthesisError>;
 }
 
 pub trait ZSwapParameters {
@@ -157,7 +157,7 @@ impl<P: ZSwapParameters> OneTimeAccount for ZSwapOTA<P> {
     type Attributes = Attributes;
     type Note = P::F;
     type Ciphertext = Vec<u8>;
-    type Invalidator = P::F;
+    type Nullifier = P::F;
 
     fn keygen<R: Rng + CryptoRng + ?Sized>(rng: &mut R) -> (Self::PublicKey, Self::SecretKey) {
         let a_sk = P::F::rand(rng);
@@ -213,7 +213,7 @@ impl<P: ZSwapParameters> OneTimeAccount for ZSwapOTA<P> {
         }
     }
 
-    fn tag_eval((a_sk, _): &Self::SecretKey, r: &Self::Randomness) -> Self::Invalidator {
+    fn nul_eval((a_sk, _): &Self::SecretKey, r: &Self::Randomness) -> Self::Nullifier {
         let c1 = P::Hash::compress(a_sk, &r.rn);
         P::Hash::compress(&Self::DOMAIN_SEP_INVALIDATOR.into(), &c1)
     }
@@ -326,7 +326,7 @@ impl<P: ZSwapGadgetParameters, P1: ZSwapParameters<F = P::F>> OTAGadget<ZSwapOTA
     type Randomness = RandomnessVar<P::F>;
     type Attributes = AttributesVar<P::F>;
     type Note = FpVar<P::F>;
-    type Invalidator = FpVar<P::F>;
+    type Nullifier = FpVar<P::F>;
 
     fn derive_public_key(
         hash_params: &Self::KeyDeriveParams,
@@ -346,11 +346,11 @@ impl<P: ZSwapGadgetParameters, P1: ZSwapParameters<F = P::F>> OTAGadget<ZSwapOTA
         P::Commit::commit(params, (&c1, &attribs.as_field()?), &r.rc)
     }
 
-    fn tag_eval(
+    fn nul_eval(
         params: &Self::TagEvalParams,
         sk: &Self::SecretKey,
         r: &Self::Randomness,
-    ) -> Result<Self::Invalidator, SynthesisError> {
+    ) -> Result<Self::Nullifier, SynthesisError> {
         let c1 = P::Hash::compress(params, &sk.0, &r.rn)?;
         let domain_sep_invalidator = FpVar::Constant(ZSwapOTA::<P1>::DOMAIN_SEP_INVALIDATOR.into());
         P::Hash::compress(params, &domain_sep_invalidator, &c1)
