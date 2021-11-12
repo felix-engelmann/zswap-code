@@ -27,8 +27,7 @@ dependencies = [
 [[package]]
 name = "ark-crypto-primitives"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff773c0ef8c655c98071d3026a63950798a66b2f45baef22d8334c1756f1bd18"
+source = "git+https://github.com/arkworks-rs/crypto-primitives#55a414721c25f18a883d162442298d81201192aa"
 dependencies = [
  "ark-ec",
  "ark-ff",
@@ -37,6 +36,7 @@ dependencies = [
  "ark-relations",
  "ark-serialize",
  "ark-snark",
+ "ark-sponge",
  "ark-std",
  "blake2",
  "derivative",
@@ -224,6 +224,24 @@ dependencies = [
  "ark-ff",
  "ark-relations",
  "ark-std",
+]
+
+[[package]]
+name = "ark-sponge"
+version = "0.3.0"
+source = "git+https://github.com/arkworks-rs/sponge#51d6fc9aac1fa69f44a04839202b5de828584ed8"
+dependencies = [
+ "ark-ec",
+ "ark-ff",
+ "ark-nonnative-field",
+ "ark-r1cs-std",
+ "ark-relations",
+ "ark-serialize",
+ "ark-std",
+ "derivative",
+ "digest",
+ "rand_chacha",
+ "tracing",
 ]
 
 [[package]]
@@ -729,6 +747,8 @@ dependencies = [
  "ark-r1cs-std",
  "ark-relations",
  "ark-snark",
+ "ark-sponge",
  "ark-std",
+ "lazy_static",
  "rand",
 ]

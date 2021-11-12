@@ -43,7 +43,10 @@ pub trait OneTimeAccount {
     fn tag_eval(sk: &Self::SecretKey, r: &Self::Randomness) -> Self::Invalidator;
 }
 
-pub trait OTAConstraints<OTA: OneTimeAccount, F: Field> {
+pub trait OTAGadget<OTA: OneTimeAccount, F: Field> {
+    type KeyDeriveParams;
+    type GenParams;
+    type TagEvalParams;
     type SecretKey: AllocVar<OTA::SecretKey, F>;
     type PublicKey: AllocVar<OTA::PartialPublicKey, F>;
     type Randomness: AllocVar<OTA::Randomness, F>;
@@ -51,13 +54,18 @@ pub trait OTAConstraints<OTA: OneTimeAccount, F: Field> {
     type Note: AllocVar<OTA::Note, F>;
     type Invalidator: AllocVar<OTA::Invalidator, F>;
 
-    fn derive_public_key(sk: &Self::SecretKey) -> Result<Self::PublicKey, SynthesisError>;
+    fn derive_public_key(
+        params: &Self::KeyDeriveParams,
+        sk: &Self::SecretKey,
+    ) -> Result<Self::PublicKey, SynthesisError>;
     fn gen(
+        params: &Self::GenParams,
         pk: &Self::PublicKey,
         attribs: &Self::Attributes,
         r: &Self::Randomness,
     ) -> Result<Self::Note, SynthesisError>;
     fn tag_eval(
+        params: &Self::TagEvalParams,
         sk: &Self::SecretKey,
         r: &Self::Randomness,
     ) -> Result<Self::Invalidator, SynthesisError>;
@@ -66,9 +74,7 @@ pub trait OTAConstraints<OTA: OneTimeAccount, F: Field> {
 pub trait ZSwapParameters {
     type F: PrimeField;
     type Hash: CompressionFunction<Self::F>;
-    type HashConstraint: CompressionFunction<FpVar<Self::F>>;
     type Commit: CommitmentScheme<Self::F>;
-    type CommitConstraint: CommitmentScheme<FpVar<Self::F>>;
     type Encrypt: EncryptionScheme;
 }
 
@@ -213,13 +219,13 @@ impl<P: ZSwapParameters> OneTimeAccount for ZSwapOTA<P> {
     }
 }
 
-pub trait ZSwapConstraintParameters {
+pub trait ZSwapGadgetParameters {
     type F: PrimeField;
-    type Hash: CompressionFunctionConstraint<FpVar<Self::F>>;
-    type Commit: CommitmentSchemeConstraint<FpVar<Self::F>>;
+    type Hash: CompressionFunctionGadget<FpVar<Self::F>>;
+    type Commit: CommitmentSchemeGadget<FpVar<Self::F>>;
 }
 
-pub struct ZSwapOTAConstraints<P>(PhantomData<P>);
+pub struct ZSwapOTAGadget<P>(PhantomData<P>);
 
 pub struct SecretKeyVar<F: PrimeField>(FpVar<F>);
 
@@ -306,9 +312,12 @@ impl<F: Field> AllocVar<Attributes, F> for AttributesVar<F> {
     }
 }
 
-impl<P: ZSwapConstraintParameters, P1: ZSwapParameters<F = P::F>> OTAConstraints<ZSwapOTA<P1>, P::F>
-    for ZSwapOTAConstraints<P>
+impl<P: ZSwapGadgetParameters, P1: ZSwapParameters<F = P::F>> OTAGadget<ZSwapOTA<P1>, P::F>
+    for ZSwapOTAGadget<P>
 {
+    type KeyDeriveParams = <P::Hash as CompressionFunctionGadget<FpVar<P::F>>>::ParametersVar;
+    type GenParams = <P::Commit as CommitmentSchemeGadget<FpVar<P::F>>>::ParametersVar;
+    type TagEvalParams = <P::Hash as CompressionFunctionGadget<FpVar<P::F>>>::ParametersVar;
     type SecretKey = SecretKeyVar<P::F>;
     type PublicKey = FpVar<P::F>;
     type Randomness = RandomnessVar<P::F>;
@@ -316,26 +325,31 @@ impl<P: ZSwapConstraintParameters, P1: ZSwapParameters<F = P::F>> OTAConstraints
     type Note = FpVar<P::F>;
     type Invalidator = FpVar<P::F>;
 
-    fn derive_public_key(sk: &Self::SecretKey) -> Result<Self::PublicKey, SynthesisError> {
+    fn derive_public_key(
+        hash_params: &Self::KeyDeriveParams,
+        sk: &Self::SecretKey,
+    ) -> Result<Self::PublicKey, SynthesisError> {
         let domain_sep_var = FpVar::Constant(ZSwapOTA::<P1>::DOMAIN_SEP_PK_DERIV.into());
-        P::Hash::compress(&domain_sep_var, &sk.0)
+        P::Hash::compress(hash_params, &domain_sep_var, &sk.0)
     }
 
     fn gen(
+        params: &Self::GenParams,
         pk: &Self::PublicKey,
         attribs: &Self::Attributes,
         r: &Self::Randomness,
     ) -> Result<Self::Note, SynthesisError> {
-        let c1 = P::Commit::commit((pk, &r.rn), &r.rk)?;
-        P::Commit::commit((&c1, &attribs.as_field()?), &r.rc)
+        let c1 = P::Commit::commit(params, (pk, &r.rn), &r.rk)?;
+        P::Commit::commit(params, (&c1, &attribs.as_field()?), &r.rc)
     }
 
     fn tag_eval(
+        params: &Self::TagEvalParams,
         sk: &Self::SecretKey,
         r: &Self::Randomness,
     ) -> Result<Self::Invalidator, SynthesisError> {
-        let c1 = P::Hash::compress(&sk.0, &r.rn)?;
+        let c1 = P::Hash::compress(params, &sk.0, &r.rn)?;
         let domain_sep_invalidator = FpVar::Constant(ZSwapOTA::<P1>::DOMAIN_SEP_INVALIDATOR.into());
-        P::Hash::compress(&domain_sep_invalidator, &c1)
+        P::Hash::compress(params, &domain_sep_invalidator, &c1)
     }
 }

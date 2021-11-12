@@ -21,6 +21,13 @@ ark-snark = { version = "^0.3.0" }
 
 ark-groth16 = { version = "^0.3.0", features = ["std", "r1cs", "parallel"] }
 
-ark-crypto-primitives = { version = "^0.3.0", default-features = true, features = ["r1cs", "parallel"] }
+ark-crypto-primitives = { version = "^0.3.0", features = ["r1cs", "parallel"] }
+ark-sponge = { version = "^0.3.0", features = ["r1cs", "std"] }
 
 rand = "*"
+lazy_static = "*"
+
+# Bring forward compression functions over fields from next arkworks release.
+[patch.crates-io]
+ark-crypto-primitives = { git = "https://github.com/arkworks-rs/crypto-primitives" }
+ark-sponge = { git = "https://github.com/arkworks-rs/sponge" }
