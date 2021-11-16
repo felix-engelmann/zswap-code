@@ -3,9 +3,10 @@ use crate::ota::{OTAGadget, OneTimeAccount};
 use crate::primitives::*;
 use crate::sparse_merkle_tree::SparseMerkleTree;
 use crate::zswap::{Transaction, ZSwapScheme};
+use ark_crypto_primitives::merkle_tree::Path;
 use ark_ff::bytes::{FromBytes, ToBytes};
 use ark_ff::fields::{Field, PrimeField};
-use ark_ff::UniformRand;
+use ark_ff::{UniformRand, Zero};
 use ark_r1cs_std::alloc::{AllocVar, AllocationMode};
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_relations;
@@ -17,17 +18,25 @@ use rand::{CryptoRng, Rng};
 use std::borrow::Borrow;
 use std::cmp::Ordering;
 use std::collections::HashSet;
+use std::hash::Hash;
 use std::io::{self, Cursor, Read, Write};
 use std::marker::PhantomData;
 
 pub trait ZSwapParameters {
     type F: PrimeField;
+    type EmbeddedBaseField: PrimeField;
+    type EmbeddedScalarField: PrimeField;
     type Hash: CompressionFunction<Self::F>;
     type HashGadget: CompressionFunctionGadget<FpVar<Self::F>>;
     type Commit: CommitmentScheme<Self::F>;
     type CommitGadget: CommitmentSchemeGadget<FpVar<Self::F>>;
     type Encrypt: EncryptionScheme;
     type MerkleTree: MerkleTreeParams<Self::F>;
+    type HomomorphicCommitment: HomomorphicCommitmentScheme<
+        Self::EmbeddedBaseField,
+        Self::EmbeddedScalarField,
+        Self::EmbeddedScalarField,
+    >;
     type SNARK: CircuitSpecificSetupSNARK<Self::F>;
 }
 
@@ -35,12 +44,18 @@ pub struct DefaultParameters;
 
 impl ZSwapParameters for DefaultParameters {
     type F = ::ark_bls12_381::Fr;
+    type EmbeddedBaseField = ::ark_ed_on_bls12_381::Fq;
+    type EmbeddedScalarField = ::ark_ed_on_bls12_381::Fr;
     type Hash = crate::poseidon::Poseidon;
     type HashGadget = crate::poseidon::Poseidon;
     type Commit = crate::poseidon::Poseidon;
     type CommitGadget = crate::poseidon::Poseidon;
     type Encrypt = crate::primitives::ECIES;
     type MerkleTree = crate::poseidon::Poseidon;
+    type HomomorphicCommitment = crate::primitives::MultiBasePedersen<
+        ::ark_ed_on_bls12_381::JubjubParameters,
+        crate::poseidon::Poseidon,
+    >;
     type SNARK =
         ::ark_groth16::Groth16<::ark_ec::models::bls12::Bls12<::ark_bls12_381::Parameters>>;
 }
@@ -314,6 +329,8 @@ impl<P: ZSwapParameters> OTAGadget<P::F> for ZSwap<P> {
     }
 }
 
+const MERKLE_TREE_HEIGHT: usize = 32;
+
 pub struct ZSwapState<P: ZSwapParameters> {
     notes: HashSet<<ZSwap<P> as OneTimeAccount>::Note>,
     nullifiers: HashSet<<ZSwap<P> as OneTimeAccount>::Nullifier>,
@@ -323,11 +340,11 @@ pub struct ZSwapState<P: ZSwapParameters> {
 }
 
 impl<P: ZSwapParameters> ZSwapState<P> {
-    pub fn new(depth: usize) -> Self {
+    pub fn new() -> Self {
         let merkle_tree = SparseMerkleTree::blank(
             P::MerkleTree::leaf_param(),
             P::MerkleTree::compression_param(),
-            depth,
+            MERKLE_TREE_HEIGHT,
         );
         ZSwapState {
             notes: HashSet::new(),
@@ -362,11 +379,44 @@ impl<P: ZSwapParameters> ConstraintSynthesizer<P::F> for LangOutput<P> {
     }
 }
 
-impl<P: ZSwapParameters> ZSwapScheme for ZSwap<P> {
+#[allow(type_alias_bounds)]
+type Proof<P: ZSwapParameters> = <P::SNARK as SNARK<P::F>>::Proof;
+#[allow(type_alias_bounds)]
+type HomomorphicCommitment<P: ZSwapParameters> =
+    <P::HomomorphicCommitment as HomomorphicCommitmentScheme<
+        P::EmbeddedBaseField,
+        P::EmbeddedScalarField,
+        P::EmbeddedScalarField,
+    >>::Commitment;
+
+pub struct ZSwapSignature<P: ZSwapParameters> {
+    pub input_signatures: HashSet<(
+        Proof<P>,
+        HomomorphicCommitment<P>,
+        <ZSwap<P> as OneTimeAccount>::Nullifier,
+    )>,
+    pub output_signatures: HashSet<(
+        Proof<P>,
+        HomomorphicCommitment<P>,
+        (
+            <ZSwap<P> as OneTimeAccount>::Note,
+            <ZSwap<P> as OneTimeAccount>::Ciphertext,
+        ),
+    )>,
+    pub randomness: P::EmbeddedScalarField,
+}
+
+impl<P: ZSwapParameters> ZSwapScheme for ZSwap<P>
+where
+    P::EmbeddedBaseField: Hash,
+    P::EmbeddedScalarField: Hash,
+    HomomorphicCommitment<P>: Hash + Clone,
+    Proof<P>: Eq + Hash,
+{
     type PublicParameters = ZSwapPublicParams<P>;
-    type Signature = ();
+    type Signature = ZSwapSignature<P>;
     type State = ZSwapState<P>;
-    type StateWitness = ();
+    type StateWitness = Path<<P::MerkleTree as MerkleTreeParams<P::F>>::Config>;
     type Error = <P::SNARK as SNARK<P::F>>::Error;
 
     fn setup<R: Rng + CryptoRng>(rng: &mut R) -> Result<Self::PublicParameters, Self::Error> {
@@ -432,6 +482,18 @@ impl<P: ZSwapParameters> ZSwapScheme for ZSwap<P> {
         signatures: &[Self::Signature],
         rng: &mut R,
     ) -> Result<Self::Signature, Self::Error> {
-        unimplemented!()
+        let mut input_signatures = HashSet::new();
+        let mut output_signatures = HashSet::new();
+        let mut randomness = P::EmbeddedScalarField::zero();
+        for sig in signatures {
+            input_signatures.extend(sig.input_signatures.iter().cloned());
+            output_signatures.extend(sig.output_signatures.iter().cloned());
+            randomness += sig.randomness;
+        }
+        Ok(ZSwapSignature {
+            input_signatures,
+            output_signatures,
+            randomness,
+        })
     }
 }

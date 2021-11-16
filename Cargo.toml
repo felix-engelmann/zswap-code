@@ -8,6 +8,7 @@ edition = "2018"
 [dependencies]
 
 ark-ff = { version = "^0.3.0", features = ["std", "asm", "parallel"] }
+ark-nonnative-field = { version = "^0.3.0", features = ["std"] }
 ark-ec = { version = "^0.3.0", features = ["std", "parallel"] }
 
 ark-bls12-381 = { version = "^0.3.0", features = ["std"] }
@@ -29,7 +30,9 @@ lazy_static = "^1.4.0"
 
 ecies = "^0.2.1"
 
-# Bring forward compression functions over fields from next arkworks release.
 [patch.crates-io]
+# Bring forward compression functions over fields from next arkworks release.
 ark-crypto-primitives = { git = "https://github.com/arkworks-rs/crypto-primitives" }
 ark-sponge = { git = "https://github.com/arkworks-rs/sponge" }
+# Bring forward EC operations
+ark-ed-on-bls12-381 = { git = "https://github.com/arkworks-rs/curves" }

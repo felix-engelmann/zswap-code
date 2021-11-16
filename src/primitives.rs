@@ -1,8 +1,17 @@
 use ark_crypto_primitives::merkle_tree::{self, LeafParam, TwoToOneParam};
+use ark_ec::models::twisted_edwards_extended::GroupAffine;
+use ark_ec::models::TEModelParameters;
+use ark_ff::fields::PrimeField;
+use ark_nonnative_field::NonNativeFieldVar;
+use ark_r1cs_std::eq::EqGadget;
+use ark_r1cs_std::fields::fp::FpVar;
+use ark_r1cs_std::groups::curves::twisted_edwards::AffineVar;
 use ark_relations::r1cs::SynthesisError;
 #[cfg(test)]
 use rand::thread_rng;
 use rand::{CryptoRng, Rng};
+use std::marker::PhantomData;
+use std::ops::{Add, Neg, Sub};
 
 pub trait EncryptionScheme {
     type SecretKey;
@@ -57,6 +66,91 @@ where
         Self::compress(params, &Self::compress(params, a, b)?, r)
     }
 }
+
+pub trait HomomorphicCommitmentScheme<T, V, R>
+where
+    V: Eq + Add<Output = V> + Sub<Output = V> + Neg<Output = V>,
+    R: Eq + Add<Output = R> + Sub<Output = R> + Neg<Output = R>,
+{
+    type Commitment: Eq
+        + Add<Output = Self::Commitment>
+        + Sub<Output = Self::Commitment>
+        + Neg<Output = Self::Commitment>;
+    type TypeWitness;
+
+    /// Must be such that:
+    /// a) Summed commitments should verify against their summed randomness.
+    /// b) Summed commitments should be equal to a sum of (for each type) the value sum.
+    fn commit(type_: &T, v: &V, r: &R) -> (Self::Commitment, Self::TypeWitness);
+    fn verify(type_: &T, wit: &Self::TypeWitness, v: &V, r: &R) -> Option<Self::Commitment>;
+}
+
+pub trait HomomorphicCommitmentSchemeGadget<F: PrimeField, T, V, R>
+where
+    V: EqGadget<F> + Add<Output = V> + Sub<Output = V>,
+    R: EqGadget<F> + Add<Output = R> + Sub<Output = R>,
+{
+    type ParametersVar;
+    type CommitmentVar: EqGadget<F>
+        + Add<Output = Self::CommitmentVar>
+        + Sub<Output = Self::CommitmentVar>;
+    type TypeWitnessVar;
+
+    fn verify(
+        type_: &T,
+        wit: &Self::TypeWitnessVar,
+        v: &V,
+        r: &R,
+        com: &Self::CommitmentVar,
+    ) -> Result<(), SynthesisError>;
+}
+
+pub struct MultiBasePedersen<P: TEModelParameters, H: CompressionFunction<P::BaseField>>(
+    pub PhantomData<(P, H)>,
+);
+
+// Basic idea: Our type `type_: P::BaseField` is combined with a counter `ctr: P::BaseField` using
+// a two-to-one hash. The result should be in `x: P::ScalarField` (conversion check needed). Find
+// `y: P::ScalarField` such that `(x, y)` is a valid curve point. `(ctr, y)` are witnesses to
+// `type_`.
+#[allow(unused_variables)]
+impl<P: TEModelParameters, H: CompressionFunction<P::BaseField>>
+    HomomorphicCommitmentScheme<P::BaseField, P::ScalarField, P::ScalarField>
+    for MultiBasePedersen<P, H>
+{
+    type Commitment = GroupAffine<P>;
+    type TypeWitness = (P::BaseField, P::ScalarField);
+
+    fn commit(
+        type_: &P::BaseField,
+        v: &P::ScalarField,
+        r: &P::ScalarField,
+    ) -> (Self::Commitment, Self::TypeWitness) {
+        unimplemented!()
+    }
+
+    fn verify(
+        type_: &P::BaseField,
+        wit: &Self::TypeWitness,
+        v: &P::ScalarField,
+        r: &P::ScalarField,
+    ) -> Option<Self::Commitment> {
+        unimplemented!()
+    }
+}
+
+// FIXME: Aligning FpVar<F> and FpVar<P::BaseField> is a pain! Even though they are ostensibly the
+// same...
+// #[allow(unused_variables)]
+// impl<F: PrimeField, P: TEModelParameters, H: CompressionFunctionGadget<F>> HomomorphicCommitmentSchemeGadget<F, FpVar<F>, NonNativeFieldVar<P::ScalarField, F>, NonNativeFieldVar<P::ScalarField, F>> for MultiBasePedersen<P, H> {
+//     type ParametersVar = <H as CompressionFunctionGadget<F>>::ParametersVar;
+//     type CommitmentVar = AffineVar<P, FpVar<F>>;
+//     type TypeWitnessVar = (FpVar<F>, NonNativeFieldVar<P::ScalarField, F>);
+//
+//     fn verify(type_: &FpVar<F>, wit: &Self::TypeWitnessVar, v: &NonNativeFieldVar<P::ScalarField, F>, r: &NonNativeFieldVar<P::ScalarField, F>, com: &Self::CommitmentVar) -> Result<(), SynthesisError> {
+//         unimplemented!()
+//     }
+// }
 
 pub trait MerkleTreeParams<F> {
     type Config: merkle_tree::Config<Leaf = [F], LeafDigest = F, InnerDigest = F>;
