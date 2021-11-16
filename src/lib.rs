@@ -3,6 +3,8 @@ extern crate rand;
 extern crate lazy_static;
 
 pub mod ota;
-pub mod zswap;
 pub mod poseidon;
 pub mod primitives;
+pub mod protocol;
+pub mod sparse_merkle_tree;
+pub mod zswap;

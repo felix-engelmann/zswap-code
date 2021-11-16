@@ -1,3 +1,4 @@
+use ark_crypto_primitives::merkle_tree::{self, LeafParam, TwoToOneParam};
 use ark_relations::r1cs::SynthesisError;
 #[cfg(test)]
 use rand::thread_rng;
@@ -55,6 +56,13 @@ where
     fn commit(params: &Self::ParametersVar, (a, b): (&F, &F), r: &F) -> Result<F, SynthesisError> {
         Self::compress(params, &Self::compress(params, a, b)?, r)
     }
+}
+
+pub trait MerkleTreeParams<F> {
+    type Config: merkle_tree::Config<Leaf = [F], LeafDigest = F, InnerDigest = F>;
+
+    fn leaf_param() -> &'static LeafParam<Self::Config>;
+    fn compression_param() -> &'static TwoToOneParam<Self::Config>;
 }
 
 pub struct ECIES;

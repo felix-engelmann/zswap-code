@@ -1,15 +1,16 @@
 // This file pieced together from https://github.com/webb-tools/arkworks-gadgets.
 
-use crate::primitives::{CompressionFunction, CompressionFunctionGadget};
-use ark_bls12_381::Fq;
+use crate::primitives::{CompressionFunction, CompressionFunctionGadget, MerkleTreeParams};
+use ark_bls12_381::Fr;
 use ark_crypto_primitives::crh::{
     constraints::TwoToOneCRHSchemeGadget,
     poseidon::{
         constraints::{CRHParametersVar, TwoToOneCRHGadget},
-        TwoToOneCRH,
+        TwoToOneCRH, CRH,
     },
     TwoToOneCRHScheme,
 };
+use ark_crypto_primitives::merkle_tree::{self, IdentityDigestConverter, LeafParam, TwoToOneParam};
 use ark_ff::fields::PrimeField;
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_relations::r1cs::SynthesisError;
@@ -591,7 +592,7 @@ fn get_mds_poseidon_bls381_x5_5<F: PrimeField>() -> Vec<Vec<F>> {
 }
 
 lazy_static! {
-    pub static ref POSEIDON_PARAMETERS: PoseidonParameters<Fq> = PoseidonParameters::new(
+    pub static ref POSEIDON_PARAMETERS: PoseidonParameters<Fr> = PoseidonParameters::new(
         8,
         60,
         5,
@@ -604,21 +605,42 @@ lazy_static! {
 
 pub struct Poseidon;
 
-impl CompressionFunction<Fq> for Poseidon {
-    fn compress(left: &Fq, right: &Fq) -> Fq {
-        TwoToOneCRH::<Fq>::compress(&*POSEIDON_PARAMETERS, left, right)
+impl CompressionFunction<Fr> for Poseidon {
+    fn compress(left: &Fr, right: &Fr) -> Fr {
+        TwoToOneCRH::<Fr>::compress(&*POSEIDON_PARAMETERS, left, right)
             .expect("Failed to Poseidon compress")
     }
 }
 
-impl CompressionFunctionGadget<FpVar<Fq>> for Poseidon {
-    type ParametersVar = CRHParametersVar<Fq>;
+impl CompressionFunctionGadget<FpVar<Fr>> for Poseidon {
+    type ParametersVar = CRHParametersVar<Fr>;
 
     fn compress(
         params: &Self::ParametersVar,
-        a: &FpVar<Fq>,
-        b: &FpVar<Fq>,
-    ) -> Result<FpVar<Fq>, SynthesisError> {
-        TwoToOneCRHGadget::<Fq>::compress(params, a, b)
+        a: &FpVar<Fr>,
+        b: &FpVar<Fr>,
+    ) -> Result<FpVar<Fr>, SynthesisError> {
+        TwoToOneCRHGadget::<Fr>::compress(params, a, b)
+    }
+}
+
+impl merkle_tree::Config for Poseidon {
+    type Leaf = [Fr];
+    type LeafDigest = Fr;
+    type LeafInnerDigestConverter = IdentityDigestConverter<Fr>;
+    type InnerDigest = Fr;
+    type LeafHash = CRH<Fr>;
+    type TwoToOneHash = TwoToOneCRH<Fr>;
+}
+
+impl MerkleTreeParams<Fr> for Poseidon {
+    type Config = Self;
+
+    fn leaf_param() -> &'static LeafParam<Self::Config> {
+        &*POSEIDON_PARAMETERS
+    }
+
+    fn compression_param() -> &'static TwoToOneParam<Self::Config> {
+        &*POSEIDON_PARAMETERS
     }
 }

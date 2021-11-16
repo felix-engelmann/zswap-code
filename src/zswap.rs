@@ -1,5 +1,6 @@
 use crate::ota::*;
-use rand::{Rng, CryptoRng};
+use rand::{CryptoRng, Rng};
+use std::collections::{hash_map::Entry, HashMap};
 
 pub trait ZSwapScheme: OneTimeAccount {
     type PublicParameters;
@@ -8,12 +9,24 @@ pub trait ZSwapScheme: OneTimeAccount {
     type StateWitness;
     type Error;
 
-    fn setup<R: Rng + CryptoRng + ?Sized>(rng: &mut R) -> Result<Self::PublicParameters, Self::Error>;
+    fn setup<R: Rng + CryptoRng>(rng: &mut R) -> Result<Self::PublicParameters, Self::Error>;
 
     fn sign_tx<R: Rng + CryptoRng + ?Sized>(
         params: &Self::PublicParameters,
-        inputs: &[(Self::SecretKey, Self::Note, Self::Nullifier, Self::StateWitness, Self::Attributes, Self::Randomness)],
-        outputs: &[(Self::PublicKey, Self::Note, Self::Attributes, Self::Randomness)],
+        inputs: &[(
+            Self::SecretKey,
+            Self::Note,
+            Self::Nullifier,
+            Self::StateWitness,
+            Self::Attributes,
+            Self::Randomness,
+        )],
+        outputs: &[(
+            Self::PublicKey,
+            Self::Note,
+            Self::Attributes,
+            Self::Randomness,
+        )],
         state: &Self::State,
         rng: &mut R,
     ) -> Result<Self::Signature, Self::Error>;
@@ -36,37 +49,66 @@ pub trait ZSwapScheme: OneTimeAccount {
         rng: &mut R,
     ) -> Result<Self::Signature, Self::Error>;
 
-    fn apply_tx<R: Rng + CryptoRng + ?Sized>(
-        state: &mut Self::State,
-        transaction: &Transaction<Self>,
-    ) -> Result<(), Self::Error> {
-        unimplemented!()
+    fn apply_tx(state: &mut Self::State, transaction: &Transaction<Self>) {
+        for input in transaction.inputs.iter() {
+            Self::apply_input(state, input);
+        }
+        for (output, _) in transaction.outputs.iter() {
+            Self::apply_output(state, output);
+        }
     }
 
-    fn receive_tx<R: Rng + CryptoRng + ?Sized>(
-        params: &Self::PublicParameters,
+    fn receive_tx(
         transaction: &Transaction<Self>,
-        sk: &[Self::SecretKey],
-        rng: &mut R,
-    ) -> Result<Vec<(Self::SecretKey, Self::Nullifier, Self::Attributes, Self::Randomness)>, Self::Error> {
-        unimplemented!()
+        sks: &[Self::SecretKey],
+    ) -> Vec<(
+        Self::SecretKey,
+        Self::Nullifier,
+        Self::Attributes,
+        Self::Randomness,
+    )>
+    where
+        Self::SecretKey: Clone,
+    {
+        let mut ret = Vec::new();
+        for sk in sks.iter() {
+            for (note, ciphertext) in transaction.outputs.iter() {
+                if let Some((attribs, r)) = Self::receive(note, ciphertext, sk) {
+                    ret.push((sk.clone(), Self::nul_eval(sk, &r), attribs, r));
+                }
+            }
+        }
+        ret
     }
-}
-
-pub struct Delta {
-    pub value: u64,
-    pub type_: u64,
-    pub is_positive: bool,
 }
 
 pub struct Transaction<Z: ZSwapScheme + ?Sized> {
     pub inputs: Vec<Z::Nullifier>,
     pub outputs: Vec<(Z::Note, Z::Ciphertext)>,
-    pub deltas: Vec<Delta>,
+    pub deltas: HashMap<u64, i128>,
 }
 
-impl<Z: ZSwapScheme + ?Sized> Transaction<Z> {
-    pub fn merge(&self, other: &Self) -> Self {
-        unimplemented!()
+impl<Z: ZSwapScheme + ?Sized> Transaction<Z>
+where
+    Z::Nullifier: Ord,
+    Z::Note: Ord,
+    Z::Ciphertext: Ord,
+{
+    pub fn merge(mut self, other: Self) -> Self {
+        self.inputs.extend(other.inputs);
+        self.inputs.sort();
+        self.outputs.extend(other.outputs);
+        self.outputs.sort();
+        for (k, v) in other.deltas.into_iter() {
+            match self.deltas.entry(k) {
+                Entry::Occupied(mut entry) => {
+                    *entry.get_mut() += v;
+                }
+                Entry::Vacant(entry) => {
+                    entry.insert(v);
+                }
+            }
+        }
+        self
     }
 }

@@ -24,10 +24,10 @@ ark-groth16 = { version = "^0.3.0", features = ["std", "r1cs", "parallel"] }
 ark-crypto-primitives = { version = "^0.3.0", features = ["r1cs", "parallel"] }
 ark-sponge = { version = "^0.3.0", features = ["r1cs", "std"] }
 
-rand = "*"
-lazy_static = "*"
+rand = "^0.8.4"
+lazy_static = "^1.4.0"
 
-ecies = "0.2.1"
+ecies = "^0.2.1"
 
 # Bring forward compression functions over fields from next arkworks release.
 [patch.crates-io]
