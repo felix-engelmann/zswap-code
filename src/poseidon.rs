@@ -1,19 +1,23 @@
 // This file pieced together from https://github.com/webb-tools/arkworks-gadgets.
 
-use crate::primitives::{CompressionFunction, CompressionFunctionGadget, MerkleTreeParams};
+use crate::primitives::{
+    CompressionFunction, CompressionFunctionGadget, MerkleTreeParams, ParameterFunction,
+    ParameterGadget,
+};
 use ark_bls12_381::Fr;
 use ark_crypto_primitives::crh::{
     constraints::TwoToOneCRHSchemeGadget,
     poseidon::{
-        constraints::{CRHParametersVar, TwoToOneCRHGadget},
+        constraints::{CRHGadget, CRHParametersVar, TwoToOneCRHGadget},
         TwoToOneCRH, CRH,
     },
     TwoToOneCRHScheme,
 };
 use ark_crypto_primitives::merkle_tree::{self, IdentityDigestConverter, LeafParam, TwoToOneParam};
 use ark_ff::fields::PrimeField;
+use ark_r1cs_std::alloc::AllocVar;
 use ark_r1cs_std::fields::fp::FpVar;
-use ark_relations::r1cs::SynthesisError;
+use ark_relations::r1cs::{Namespace, SynthesisError};
 use ark_sponge::poseidon::PoseidonParameters;
 
 // Parameter for:
@@ -607,15 +611,35 @@ pub struct Poseidon;
 
 pub struct PoseidonJubJub;
 
+impl ParameterFunction for Poseidon {
+    type Parameters = PoseidonParameters<Fr>;
+
+    fn parameters() -> &'static Self::Parameters {
+        &*POSEIDON_PARAMETERS
+    }
+}
+
 impl CompressionFunction<Fr> for Poseidon {
+    type CRHScheme = CRH<Fr>;
+    type TwoToOneCRHScheme = TwoToOneCRH<Fr>;
+
     fn compress(left: &Fr, right: &Fr) -> Fr {
         TwoToOneCRH::<Fr>::compress(&*POSEIDON_PARAMETERS, left, right)
             .expect("Failed to Poseidon compress")
     }
 }
 
-impl CompressionFunctionGadget<FpVar<Fr>> for Poseidon {
+impl ParameterGadget<Fr> for Poseidon {
     type ParametersVar = CRHParametersVar<Fr>;
+
+    fn allocate(cs: impl Into<Namespace<Fr>>) -> Result<Self::ParametersVar, SynthesisError> {
+        Self::ParametersVar::new_constant(cs, &*POSEIDON_PARAMETERS)
+    }
+}
+
+impl CompressionFunctionGadget<FpVar<Fr>, Fr, Poseidon, Fr> for Poseidon {
+    type CRHScheme = CRHGadget<Fr>;
+    type TwoToOneCRHScheme = TwoToOneCRHGadget<Fr>;
 
     fn compress(
         params: &Self::ParametersVar,
@@ -635,8 +659,19 @@ impl merkle_tree::Config for Poseidon {
     type TwoToOneHash = TwoToOneCRH<Fr>;
 }
 
-impl MerkleTreeParams<Fr> for Poseidon {
+impl merkle_tree::constraints::ConfigGadget<Poseidon, Fr> for Poseidon {
+    type Leaf = [FpVar<Fr>];
+    type LeafDigest = FpVar<Fr>;
+    type LeafInnerConverter = IdentityDigestConverter<FpVar<Fr>>;
+    type InnerDigest = FpVar<Fr>;
+    type LeafHash = CRHGadget<Fr>;
+    type TwoToOneHash = TwoToOneCRHGadget<Fr>;
+}
+
+impl MerkleTreeParams<Fr, CRH<Fr>, TwoToOneCRH<Fr>> for Poseidon {
     type Config = Self;
+    type LeafParamVar = CRHParametersVar<Fr>;
+    type CompressionParamVar = CRHParametersVar<Fr>;
 
     fn leaf_param() -> &'static LeafParam<Self::Config> {
         &*POSEIDON_PARAMETERS
