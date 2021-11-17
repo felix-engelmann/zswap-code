@@ -556,6 +556,31 @@ where
         state: &Self::State,
         rng: &mut R,
     ) -> Result<Self::Signature, Self::Error> {
+
+        let rc_s: Vec<EmbeddedField<P>> =
+            (0..inputs.len()).map(|_| UniformRand::rand(rng)).collect();
+        let com_s: Vec<_> =
+            inputs.iter().zip(rc_s.iter())
+            .map(|(input,rc)|
+              <MultiBasePedersen<P::G,P::Hash> as
+               HomomorphicCommitmentScheme<_,_,_>>::
+                 commit(&From::from(input.4.type_),
+                        &From::from(input.4.value),
+                        &rc))
+            .collect();
+
+        let rc_t: Vec<EmbeddedField<P>> =
+            (0..inputs.len()).map(|_| UniformRand::rand(rng)).collect();
+        let com_t: Vec<_> =
+            outputs.iter().zip(rc_t.iter())
+            .map(|(output,rc)|
+              <MultiBasePedersen<P::G,P::Hash> as
+               HomomorphicCommitmentScheme<_,_,_>>::
+                 commit(&From::from(output.2.type_),
+                        &From::from(output.2.value),
+                        &rc))
+            .collect();
+
         unimplemented!()
     }
 
