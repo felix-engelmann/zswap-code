@@ -25,16 +25,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ark-bls12-381"
-version = "0.3.0"
-source = "git+https://github.com/arkworks-rs/curves#f1e36c5bed4c55411ef4add0730e0f4be91847f5"
-dependencies = [
- "ark-ec",
- "ark-ff",
- "ark-std",
-]
-
-[[package]]
 name = "ark-crypto-primitives"
 version = "0.3.0"
 source = "git+https://github.com/arkworks-rs/crypto-primitives#55a414721c25f18a883d162442298d81201192aa"
@@ -73,9 +63,10 @@ dependencies = [
 [[package]]
 name = "ark-ed-on-bls12-381"
 version = "0.3.0"
-source = "git+https://github.com/arkworks-rs/curves#f1e36c5bed4c55411ef4add0730e0f4be91847f5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "43b7ada17db3854f5994e74e60b18e10e818594935ee7e1d329800c117b32970"
 dependencies = [
- "ark-bls12-381 0.3.0 (git+https://github.com/arkworks-rs/curves)",
+ "ark-bls12-381",
  "ark-ec",
  "ark-ff",
  "ark-r1cs-std",
@@ -1165,7 +1156,7 @@ dependencies = [
 name = "zswap-code"
 version = "0.1.0"
 dependencies = [
- "ark-bls12-381 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "ark-bls12-381",
  "ark-crypto-primitives",
  "ark-ec",
  "ark-ed-on-bls12-381",

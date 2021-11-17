@@ -53,7 +53,7 @@ impl ZSwapParameters for DefaultParameters {
     type Encrypt = crate::primitives::ECIES;
     type MerkleTree = crate::poseidon::Poseidon;
     type HomomorphicCommitment = crate::primitives::MultiBasePedersen<
-        ::ark_ed_on_bls12_381::JubjubParameters,
+        ::ark_ed_on_bls12_381::EdwardsParameters,
         crate::poseidon::Poseidon,
     >;
     type SNARK =

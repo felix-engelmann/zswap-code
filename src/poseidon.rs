@@ -11,7 +11,6 @@ use ark_crypto_primitives::crh::{
     TwoToOneCRHScheme,
 };
 use ark_crypto_primitives::merkle_tree::{self, IdentityDigestConverter, LeafParam, TwoToOneParam};
-use ark_ed_on_bls12_381::Fq;
 use ark_ff::fields::PrimeField;
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_relations::r1cs::SynthesisError;
@@ -612,15 +611,6 @@ impl CompressionFunction<Fr> for Poseidon {
     fn compress(left: &Fr, right: &Fr) -> Fr {
         TwoToOneCRH::<Fr>::compress(&*POSEIDON_PARAMETERS, left, right)
             .expect("Failed to Poseidon compress")
-    }
-}
-
-impl CompressionFunction<Fq> for Poseidon {
-    fn compress(left: &Fq, right: &Fq) -> Fq {
-        TwoToOneCRH::<Fr>::compress::<&Fr>(&*POSEIDON_PARAMETERS, &left.0.into(), &right.0.into())
-            .expect("Failed to Poseidon compress")
-            .0
-            .into()
     }
 }
 

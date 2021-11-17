@@ -105,9 +105,9 @@ where
     ) -> Result<(), SynthesisError>;
 }
 
-pub struct MultiBasePedersen<P: TEModelParameters, H: CompressionFunction<P::BaseField>>(
-    pub PhantomData<(P, H)>,
-);
+pub struct MultiBasePedersen<P: TEModelParameters, H>(pub PhantomData<(P, H)>)
+where
+    P::BaseField: PrimeField;
 
 // Basic idea: Our type `type_: P::BaseField` is combined with a counter `ctr: P::BaseField` using
 // a two-to-one hash. The result should be in `x: P::ScalarField` (conversion check needed). Find
@@ -117,6 +117,8 @@ pub struct MultiBasePedersen<P: TEModelParameters, H: CompressionFunction<P::Bas
 impl<P: TEModelParameters, H: CompressionFunction<P::BaseField>>
     HomomorphicCommitmentScheme<P::BaseField, P::ScalarField, P::ScalarField>
     for MultiBasePedersen<P, H>
+where
+    P::BaseField: PrimeField,
 {
     type Commitment = GroupAffine<P>;
     type TypeWitness = (P::BaseField, P::ScalarField);
@@ -141,16 +143,34 @@ impl<P: TEModelParameters, H: CompressionFunction<P::BaseField>>
 
 // FIXME: Aligning FpVar<F> and FpVar<P::BaseField> is a pain! Even though they are ostensibly the
 // same...
-// #[allow(unused_variables)]
-// impl<F: PrimeField, P: TEModelParameters, H: CompressionFunctionGadget<F>> HomomorphicCommitmentSchemeGadget<F, FpVar<F>, NonNativeFieldVar<P::ScalarField, F>, NonNativeFieldVar<P::ScalarField, F>> for MultiBasePedersen<P, H> {
-//     type ParametersVar = <H as CompressionFunctionGadget<F>>::ParametersVar;
-//     type CommitmentVar = AffineVar<P, FpVar<F>>;
-//     type TypeWitnessVar = (FpVar<F>, NonNativeFieldVar<P::ScalarField, F>);
-//
-//     fn verify(type_: &FpVar<F>, wit: &Self::TypeWitnessVar, v: &NonNativeFieldVar<P::ScalarField, F>, r: &NonNativeFieldVar<P::ScalarField, F>, com: &Self::CommitmentVar) -> Result<(), SynthesisError> {
-//         unimplemented!()
-//     }
-// }
+#[allow(unused_variables)]
+impl<P: TEModelParameters, H: CompressionFunctionGadget<P::BaseField>>
+    HomomorphicCommitmentSchemeGadget<
+        P::BaseField,
+        FpVar<P::BaseField>,
+        NonNativeFieldVar<P::ScalarField, P::BaseField>,
+        NonNativeFieldVar<P::ScalarField, P::BaseField>,
+    > for MultiBasePedersen<P, H>
+where
+    P::BaseField: PrimeField,
+{
+    type ParametersVar = <H as CompressionFunctionGadget<P::BaseField>>::ParametersVar;
+    type CommitmentVar = AffineVar<P, FpVar<P::BaseField>>;
+    type TypeWitnessVar = (
+        FpVar<P::BaseField>,
+        NonNativeFieldVar<P::ScalarField, P::BaseField>,
+    );
+
+    fn verify(
+        type_: &FpVar<P::BaseField>,
+        wit: &Self::TypeWitnessVar,
+        v: &NonNativeFieldVar<P::ScalarField, P::BaseField>,
+        r: &NonNativeFieldVar<P::ScalarField, P::BaseField>,
+        com: &Self::CommitmentVar,
+    ) -> Result<(), SynthesisError> {
+        unimplemented!()
+    }
+}
 
 pub trait MerkleTreeParams<F> {
     type Config: merkle_tree::Config<Leaf = [F], LeafDigest = F, InnerDigest = F>;
