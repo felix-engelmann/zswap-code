@@ -37,7 +37,7 @@ type DpCryptoParameters = ::ark_sponge::poseidon::PoseidonParameters<DpF>;
 type DpCryptoParametersVar =
     ::ark_crypto_primitives::crh::poseidon::constraints::CRHParametersVar<DpF>;
 type DpMerkleTree = crate::poseidon::Poseidon;
-type DpHomomorphicCommitment =
+type DpHomomorphicCommitmentScheme =
     crate::primitives::MultiBasePedersen<DpG, crate::poseidon::Poseidon>;
 type DpSNARK =
     ::ark_groth16::Groth16<::ark_ec::models::bls12::Bls12<::ark_bls12_381::Parameters>>;
@@ -51,6 +51,10 @@ pub type MerkleTreeConfig = <DpMerkleTree as MerkleTreeParams<
     <DpHash as CompressionFunction<DpF>>::CRHScheme,
     <DpHash as CompressionFunction<DpF>>::TwoToOneCRHScheme,
 >>::Config;
+
+type DpHomomorphicCommitment =
+    <DpHomomorphicCommitmentScheme as
+     HomomorphicCommitmentScheme<DpF,EmbeddedField,EmbeddedField>>::Commitment;
 
 struct MerkleTreeConfigGadget();
 
@@ -455,7 +459,7 @@ impl ConstraintSynthesizer<DpF> for LangSpend {
                 Ok(self.path)
             })?;
         let sk = SecretKeyVar(FpVar::new_witness(ns!(cs, "sk"), || Ok(self.sk))?);
-        let (_, type_wit) = DpHomomorphicCommitment::commit(&self.type_, &self.value, &self.rc);
+        let (_, type_wit) = DpHomomorphicCommitmentScheme::commit(&self.type_, &self.value, &self.rc);
         let type_ = FpVar::new_witness(ns!(cs, "type"), || Ok(self.type_))?;
         //let type_wit = NonNativeFieldVar::new_witness(ns!(cs, "type_wit"), || Ok(type_wit));
         let value: EmbeddedField = self.value.into();
@@ -471,7 +475,7 @@ impl ConstraintSynthesizer<DpF> for LangSpend {
         let root2 = path.calculate_root(&params, &params, &[note][..])?;
         st.enforce_equal(&root2)?;
 
-        // let com2 = DpHomomorphicCommitmentGadget::verify(type_, type_wit,
+        // let com2 = DpHomomorphicCommitmentSchemeGadget::verify(type_, type_wit,
 
         unimplemented!()
     }
@@ -495,7 +499,7 @@ impl ConstraintSynthesizer<DpF> for LangOutput {
 type Proof = <DpSNARK as SNARK<DpF>>::Proof;
 #[allow(type_alias_bounds)]
 type HomomorphicCommitment =
-    <DpHomomorphicCommitment as HomomorphicCommitmentScheme<
+    <DpHomomorphicCommitmentScheme as HomomorphicCommitmentScheme<
         DpF,
         EmbeddedField,
         EmbeddedField,
@@ -572,65 +576,27 @@ impl ZSwapScheme for ZSwap
 
         let rc_s: Vec<EmbeddedField> =
             (0..inputs.len()).map(|_| UniformRand::rand(rng)).collect();
+        let com_s: Vec<DpHomomorphicCommitment> =
+            inputs.iter().zip(rc_s.iter())
+            .map(|(input,rc)|
+              <DpHomomorphicCommitmentScheme as
+               HomomorphicCommitmentScheme<_,_,_>>::
+                 commit(&From::from(input.4.type_),
+                        &From::from(input.4.value),
+                        &rc).0)
+            .collect();
 
-        //let com: GroupAffine<DpG> =
-        //    <MultiBasePedersen<DpG,DpHash> as
-        //       HomomorphicCommitmentScheme<_,_,_>>::
-        //         commit(&From::from(inputs[0].4.type_),
-        //                &From::from(inputs[0].4.value),
-        //                &rc_s[0]).0;
-
-//        let t: &DpF = &From::from(inputs[0].4.type_);
-//        let v: &EmbeddedField = &From::from(inputs[0].4.value);
-//        let r: &EmbeddedField = &rc_s[0];
-//        let com:
-//            (<<P as ZSwapParameters>::HomomorphicCommitment as HomomorphicCommitmentScheme<
-//                <P as ZSwapParameters>::F,
-//                <DpG as ModelParameters>::ScalarField,
-//                <DpG as ModelParameters>::ScalarField,
-//                >>::Commitment,
-//             <<P as ZSwapParameters>::HomomorphicCommitment as HomomorphicCommitmentScheme<
-//                <P as ZSwapParameters>::F,
-//                <DpG as ModelParameters>::ScalarField,
-//                <DpG as ModelParameters>::ScalarField,
-//            >>::TypeWitness
-//            ) =
-//            HomomorphicCommitmentScheme::<DpF,EmbeddedField,EmbeddedField>::
-//                 commit(t, v, r);
-
-//        let com:
-//         (<DpHomomorphicCommitment as
-//               HomomorphicCommitmentScheme<DpF,EmbeddedField,EmbeddedField>
-//          >::Commitment,
-//         <DpHomomorphicCommitment as
-//               HomomorphicCommitmentScheme<DpF,EmbeddedField,EmbeddedField>
-//          >::TypeWitness) =
-//            HomomorphicCommitmentScheme::<DpF,EmbeddedField,EmbeddedField>::
-//                 commit(t, v, &rc_s[0]);
-
-
-
-//        let com_s: Vec<_> =
-//            inputs.iter().zip(rc_s.iter())
-//            .map(|(input,rc)|
-//              <MultiBasePedersen<DpG,DpHash> as
-//               HomomorphicCommitmentScheme<_,_,_>>::
-//                 commit(&From::from(input.4.type_),
-//                        &From::from(input.4.value),
-//                        &rc).0)
-//            .collect();
-
-//        let rc_t: Vec<EmbeddedField> =
-//            (0..inputs.len()).map(|_| UniformRand::rand(rng)).collect();
-//        let com_t: Vec<HomomorphicCommitment> =
-//            outputs.iter().zip(rc_t.iter())
-//            .map(|(output,rc)|
-//              <MultiBasePedersen<DpG,DpHash> as
-//               HomomorphicCommitmentScheme<_,_,_>>::
-//                 commit(&From::from(output.2.type_),
-//                        &From::from(output.2.value),
-//                        &rc).0)
-//            .collect();
+        let rc_t: Vec<EmbeddedField> =
+            (0..inputs.len()).map(|_| UniformRand::rand(rng)).collect();
+        let com_t: Vec<DpHomomorphicCommitment> =
+            outputs.iter().zip(rc_t.iter())
+            .map(|(output,rc)|
+              <DpHomomorphicCommitmentScheme as
+               HomomorphicCommitmentScheme<_,_,_>>::
+                 commit(&From::from(output.2.type_),
+                        &From::from(output.2.value),
+                        &rc).0)
+            .collect();
 
         unimplemented!()
     }
@@ -651,26 +617,27 @@ impl ZSwapScheme for ZSwap
                 .map(|(_,com,_)| -com.clone()))
             .fold(com_one,|x,y| x + y);
 
-//        let com_rc: HomomorphicCommitment =
-//              <MultiBasePedersen<DpG,DpHash> as
-//               HomomorphicCommitmentScheme::<_,_,_>>::
-//                 commit(&<DpF as Zero>::zero(),
-//                        &<EmbeddedField as Zero>::zero(),
-//                        &signature.randomness).0;
-//
+        let com_rc: HomomorphicCommitment =
+              <DpHomomorphicCommitmentScheme as
+               HomomorphicCommitmentScheme::<_,_,_>>::
+                 commit(&<DpF as Zero>::zero(),
+                        &<EmbeddedField as Zero>::zero(),
+                        &signature.randomness).0;
 
-//            outputs.iter().zip(rc_t.iter())
-//            .map(|(output,rc)|
-//              <MultiBasePedersen<DpG,DpHash> as
-//               HomomorphicCommitmentScheme<_,_,_>>::
-//                 commit(&From::from(output.2.type_),
-//                        &From::from(output.2.value),
-//                        &rc).0)
-//            .collect();
+        let deltas_coms: HomomorphicCommitment =
+            transaction.deltas.iter()
+            .map(|(type_,val)|
+              <DpHomomorphicCommitmentScheme as
+               HomomorphicCommitmentScheme::<_,_,_>>::
+                 commit(&<DpF as From<u64>>::from(type_.clone()),
+                        &<EmbeddedField as From<i128>>::from(val.clone()),
+                        &<EmbeddedField as Zero>::zero()).0)
+            .fold(com_one,|x,y| x + y);
 
-//        let com_sum = input_minus_output - com_rc;
 
-        unimplemented!()
+        let coms_check = input_minus_output - com_rc - deltas_coms == com_one;
+
+        return Ok(coms_check);
     }
 
     fn apply_input(state: &mut Self::State, input: &Self::Nullifier) {
