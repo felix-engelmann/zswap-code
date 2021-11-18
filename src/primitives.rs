@@ -72,12 +72,12 @@ pub trait CompressionFunctionGadget<T, U, H: CompressionFunction<U>, F: Field>:
     fn compress(params: &Self::ParametersVar, a: &T, b: &T) -> Result<T, SynthesisError>;
 }
 
-pub trait CommitmentScheme<F>: ParameterFunction {
+pub trait ComScheme<F>: ParameterFunction {
     // It seems this is the structure all of our commitments follow?
     fn commit(x: (&F, &F), r: &F) -> F;
 }
 
-impl<F, T> CommitmentScheme<F> for T
+impl<F, T> ComScheme<F> for T
 where
     T: CompressionFunction<F>,
 {
@@ -86,13 +86,13 @@ where
     }
 }
 
-pub trait CommitmentSchemeGadget<T, U, H: CommitmentScheme<U>, F: Field>:
+pub trait ComSchemeGadget<T, U, H: ComScheme<U>, F: Field>:
     ParameterGadget<F>
 {
     fn commit(params: &Self::ParametersVar, x: (&T, &T), r: &T) -> Result<T, SynthesisError>;
 }
 
-impl<T, U, H: CompressionFunction<U>, F: Field, V> CommitmentSchemeGadget<T, U, H, F> for V
+impl<T, U, H: CompressionFunction<U>, F: Field, V> ComSchemeGadget<T, U, H, F> for V
 where
     V: CompressionFunctionGadget<T, U, H, F>,
 {
@@ -104,32 +104,32 @@ where
 
 // Zero implies Add
 
-pub trait HomomorphicCommitmentScheme<T, V, R>
+pub trait HomComScheme<T, V, R>
 where
     V: Eq + Zero<Output = V> + Sub<Output = V> + Neg<Output = V>,
     R: Eq + Zero<Output = R> + Sub<Output = R> + Neg<Output = R>,
 {
-    type Commitment: Eq
-        + Zero<Output = Self::Commitment>
-        + Sub<Output = Self::Commitment>
-        + Neg<Output = Self::Commitment>;
+    type Com: Eq
+        + Zero<Output = Self::Com>
+        + Sub<Output = Self::Com>
+        + Neg<Output = Self::Com>;
     type TypeWitness;
 
     /// Must be such that:
     /// a) Summed commitments should verify against their summed randomness.
     /// b) Summed commitments should be equal to a sum of (for each type) the value sum.
-    fn commit(type_: &T, v: &V, r: &R) -> (Self::Commitment, Self::TypeWitness);
-    fn verify(type_: &T, wit: &Self::TypeWitness, v: &V, r: &R) -> Option<Self::Commitment>;
+    fn commit(type_: &T, v: &V, r: &R) -> (Self::Com, Self::TypeWitness);
+    fn verify(type_: &T, wit: &Self::TypeWitness, v: &V, r: &R) -> Option<Self::Com>;
 }
 
-pub trait HomomorphicCommitmentSchemeGadget<F: PrimeField, T, V, R>: ParameterGadget<F>
+pub trait HomComSchemeGadget<F: PrimeField, T, V, R>: ParameterGadget<F>
 where
     V: EqGadget<F> + Add<Output = V> + Sub<Output = V>,
     R: EqGadget<F> + Add<Output = R> + Sub<Output = R>,
 {
-    type CommitmentVar: EqGadget<F>
-        + Add<Output = Self::CommitmentVar>
-        + Sub<Output = Self::CommitmentVar>;
+    type ComVar: EqGadget<F>
+        + Add<Output = Self::ComVar>
+        + Sub<Output = Self::ComVar>;
     type TypeWitnessVar;
 
     fn verify(
@@ -137,7 +137,7 @@ where
         wit: &Self::TypeWitnessVar,
         v: &V,
         r: &R,
-        com: &Self::CommitmentVar,
+        com: &Self::ComVar,
     ) -> Result<(), SynthesisError>;
 }
 
@@ -151,19 +151,19 @@ where
 // `type_`.
 #[allow(unused_variables)]
 impl<P: TEModelParameters, H: CompressionFunction<P::BaseField>>
-    HomomorphicCommitmentScheme<P::BaseField, P::ScalarField, P::ScalarField>
+    HomComScheme<P::BaseField, P::ScalarField, P::ScalarField>
     for MultiBasePedersen<P, H>
 where
     P::BaseField: PrimeField,
 {
-    type Commitment = GroupAffine<P>;
+    type Com = GroupAffine<P>;
     type TypeWitness = (P::BaseField, P::ScalarField);
 
     fn commit(
         type_: &P::BaseField,
         v: &P::ScalarField,
         r: &P::ScalarField,
-    ) -> (Self::Commitment, Self::TypeWitness) {
+    ) -> (Self::Com, Self::TypeWitness) {
         unimplemented!()
     }
 
@@ -172,7 +172,7 @@ where
         wit: &Self::TypeWitness,
         v: &P::ScalarField,
         r: &P::ScalarField,
-    ) -> Option<Self::Commitment> {
+    ) -> Option<Self::Com> {
         unimplemented!()
     }
 }
@@ -229,7 +229,7 @@ impl<
         H: CompressionFunction<P::BaseField>,
         HGadget: CompressionFunctionGadget<FpVar<P::BaseField>, P::BaseField, H, P::BaseField>,
     >
-    HomomorphicCommitmentSchemeGadget<
+    HomComSchemeGadget<
         P::BaseField,
         FpVar<P::BaseField>,
         NonNativeFieldVar<P::ScalarField, P::BaseField>,
@@ -238,7 +238,7 @@ impl<
 where
     P::BaseField: PrimeField,
 {
-    type CommitmentVar = AffineVar<P, FpVar<P::BaseField>>;
+    type ComVar = AffineVar<P, FpVar<P::BaseField>>;
     type TypeWitnessVar = MultiBasePedersenTypeWitness<P>;
 
     fn verify(
@@ -246,7 +246,7 @@ where
         wit: &Self::TypeWitnessVar,
         v: &NonNativeFieldVar<P::ScalarField, P::BaseField>,
         r: &NonNativeFieldVar<P::ScalarField, P::BaseField>,
-        com: &Self::CommitmentVar,
+        com: &Self::ComVar,
     ) -> Result<(), SynthesisError> {
         unimplemented!()
     }

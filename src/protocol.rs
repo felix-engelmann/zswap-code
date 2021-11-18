@@ -37,7 +37,7 @@ type DpCryptoParameters = ::ark_sponge::poseidon::PoseidonParameters<DpF>;
 type DpCryptoParametersVar =
     ::ark_crypto_primitives::crh::poseidon::constraints::CRHParametersVar<DpF>;
 type DpMerkleTree = crate::poseidon::Poseidon;
-type DpHomomorphicCommitmentScheme =
+type DpHomComScheme =
     crate::primitives::MultiBasePedersen<DpG, crate::poseidon::Poseidon>;
 type DpSNARK =
     ::ark_groth16::Groth16<::ark_ec::models::bls12::Bls12<::ark_bls12_381::Parameters>>;
@@ -52,9 +52,9 @@ pub type MerkleTreeConfig = <DpMerkleTree as MerkleTreeParams<
     <DpHash as CompressionFunction<DpF>>::TwoToOneCRHScheme,
 >>::Config;
 
-type DpHomomorphicCommitment =
-    <DpHomomorphicCommitmentScheme as
-     HomomorphicCommitmentScheme<DpF,EmbeddedField,EmbeddedField>>::Commitment;
+type DpHomCom =
+    <DpHomComScheme as
+     HomComScheme<DpF,EmbeddedField,EmbeddedField>>::Com;
 
 struct MerkleTreeConfigGadget();
 
@@ -206,8 +206,8 @@ impl OneTimeAccount for ZSwap {
         attribs: &Self::Attributes,
         r: &Self::Randomness,
     ) -> Self::Note {
-        let c1 = <DpHash as CommitmentScheme<_>>::commit((a_pk, &r.rn), &r.rk);
-        <DpHash as CommitmentScheme<_>>::commit((&c1, &attribs.as_field()), &r.rc)
+        let c1 = <DpHash as ComScheme<_>>::commit((a_pk, &r.rn), &r.rk);
+        <DpHash as ComScheme<_>>::commit((&c1, &attribs.as_field()), &r.rc)
     }
 
     fn enc<R: Rng + CryptoRng + ?Sized>(
@@ -233,8 +233,8 @@ impl OneTimeAccount for ZSwap {
         let a = Attributes::read(&mut plaintext).ok()?;
         // Verify comm
         let a_pk = Self::derive_public_key(sk);
-        let c1 = <DpHash as CommitmentScheme<_>>::commit((&a_pk, &r.rn), &r.rk);
-        let c2 = <DpHash as CommitmentScheme<_>>::commit((&c1, &a.as_field()), &r.rc);
+        let c1 = <DpHash as ComScheme<_>>::commit((&a_pk, &r.rn), &r.rk);
+        let c2 = <DpHash as ComScheme<_>>::commit((&c1, &a.as_field()), &r.rc);
         if &c2 != note {
             None
         } else {
@@ -362,8 +362,8 @@ impl OTAGadget<DpF> for ZSwap {
         attribs: &Self::AttributesVar,
         r: &Self::RandomnessVar,
     ) -> Result<Self::NoteVar, SynthesisError> {
-        let c1 = <DpHashGadget as CommitmentSchemeGadget<_,_,_,_>>::commit(params, (pk, &r.rn), &r.rk)?;
-        <DpHashGadget as CommitmentSchemeGadget<_,_,_,_>>::commit(params, (&c1, &attribs.as_field(params)?), &r.rc)
+        let c1 = <DpHashGadget as ComSchemeGadget<_,_,_,_>>::commit(params, (pk, &r.rn), &r.rk)?;
+        <DpHashGadget as ComSchemeGadget<_,_,_,_>>::commit(params, (&c1, &attribs.as_field(params)?), &r.rc)
     }
 
     fn nul_eval_gadget(
@@ -459,7 +459,7 @@ impl ConstraintSynthesizer<DpF> for LangSpend {
                 Ok(self.path)
             })?;
         let sk = SecretKeyVar(FpVar::new_witness(ns!(cs, "sk"), || Ok(self.sk))?);
-        let (_, type_wit) = DpHomomorphicCommitmentScheme::commit(&self.type_, &self.value, &self.rc);
+        let (_, type_wit) = DpHomComScheme::commit(&self.type_, &self.value, &self.rc);
         let type_ = FpVar::new_witness(ns!(cs, "type"), || Ok(self.type_))?;
         //let type_wit = NonNativeFieldVar::new_witness(ns!(cs, "type_wit"), || Ok(type_wit));
         let value: EmbeddedField = self.value.into();
@@ -475,7 +475,7 @@ impl ConstraintSynthesizer<DpF> for LangSpend {
         let root2 = path.calculate_root(&params, &params, &[note][..])?;
         st.enforce_equal(&root2)?;
 
-        // let com2 = DpHomomorphicCommitmentSchemeGadget::verify(type_, type_wit,
+        // let com2 = DpHomComSchemeGadget::verify(type_, type_wit,
 
         unimplemented!()
     }
@@ -498,27 +498,27 @@ impl ConstraintSynthesizer<DpF> for LangOutput {
 #[allow(type_alias_bounds)]
 type Proof = <DpSNARK as SNARK<DpF>>::Proof;
 #[allow(type_alias_bounds)]
-type HomomorphicCommitment =
-    <DpHomomorphicCommitmentScheme as HomomorphicCommitmentScheme<
+type HomCom =
+    <DpHomComScheme as HomComScheme<
         DpF,
         EmbeddedField,
         EmbeddedField,
-        >>::Commitment;
+        >>::Com;
 
 // wrappers to implement missing traits?
 //struct ProofW(<DpSNARK as SNARK<DpF>>::Proof); // try wrapping?
-//struct HomomorphicCommitmentW(GroupAffine<DpG>);
+//struct HomComW(GroupAffine<DpG>);
 
 
 pub struct ZSwapSignature {
     pub input_signatures: HashSet<(
         Proof,
-        HomomorphicCommitment,
+        HomCom,
         <ZSwap as OneTimeAccount>::Nullifier,
     )>,
     pub output_signatures: HashSet<(
         Proof,
-        HomomorphicCommitment,
+        HomCom,
         (
             <ZSwap as OneTimeAccount>::Note,
             <ZSwap as OneTimeAccount>::Ciphertext,
@@ -533,7 +533,7 @@ pub struct ZSwapSignature {
 impl ZSwapScheme for ZSwap
 //where
 //    EmbeddedField: Hash,
-//    HomomorphicCommitment: Hash + Clone,
+//    HomCom: Hash + Clone,
 //    Proof: Eq + Hash,
 {
     type PublicParameters = ZSwapPublicParams;
@@ -576,11 +576,11 @@ impl ZSwapScheme for ZSwap
 
         let rc_s: Vec<EmbeddedField> =
             (0..inputs.len()).map(|_| UniformRand::rand(rng)).collect();
-        let com_s: Vec<DpHomomorphicCommitment> =
+        let com_s: Vec<DpHomCom> =
             inputs.iter().zip(rc_s.iter())
             .map(|(input,rc)|
-              <DpHomomorphicCommitmentScheme as
-               HomomorphicCommitmentScheme<_,_,_>>::
+              <DpHomComScheme as
+               HomComScheme<_,_,_>>::
                  commit(&From::from(input.4.type_),
                         &From::from(input.4.value),
                         &rc).0)
@@ -588,11 +588,11 @@ impl ZSwapScheme for ZSwap
 
         let rc_t: Vec<EmbeddedField> =
             (0..inputs.len()).map(|_| UniformRand::rand(rng)).collect();
-        let com_t: Vec<DpHomomorphicCommitment> =
+        let com_t: Vec<DpHomCom> =
             outputs.iter().zip(rc_t.iter())
             .map(|(output,rc)|
-              <DpHomomorphicCommitmentScheme as
-               HomomorphicCommitmentScheme<_,_,_>>::
+              <DpHomComScheme as
+               HomComScheme<_,_,_>>::
                  commit(&From::from(output.2.type_),
                         &From::from(output.2.value),
                         &rc).0)
@@ -609,26 +609,26 @@ impl ZSwapScheme for ZSwap
         rng: &mut R,
     ) -> Result<bool, Self::Error> {
 
-        let com_one: HomomorphicCommitment = Zero::zero();
-        let input_minus_output: HomomorphicCommitment =
+        let com_one: HomCom = Zero::zero();
+        let input_minus_output: HomCom =
             signature.input_signatures.iter()
             .map(|(_,com,_)| com.clone()).chain(
                 signature.output_signatures.iter()
                 .map(|(_,com,_)| -com.clone()))
             .fold(com_one,|x,y| x + y);
 
-        let com_rc: HomomorphicCommitment =
-              <DpHomomorphicCommitmentScheme as
-               HomomorphicCommitmentScheme::<_,_,_>>::
+        let com_rc: HomCom =
+              <DpHomComScheme as
+               HomComScheme::<_,_,_>>::
                  commit(&<DpF as Zero>::zero(),
                         &<EmbeddedField as Zero>::zero(),
                         &signature.randomness).0;
 
-        let deltas_coms: HomomorphicCommitment =
+        let deltas_coms: HomCom =
             transaction.deltas.iter()
             .map(|(type_,val)|
-              <DpHomomorphicCommitmentScheme as
-               HomomorphicCommitmentScheme::<_,_,_>>::
+              <DpHomComScheme as
+               HomComScheme::<_,_,_>>::
                  commit(&<DpF as From<u64>>::from(type_.clone()),
                         &<EmbeddedField as From<i128>>::from(val.clone()),
                         &<EmbeddedField as Zero>::zero()).0)
