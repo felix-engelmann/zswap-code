@@ -5,15 +5,17 @@ use ark_ec::models::twisted_edwards_extended::GroupAffine;
 use ark_ec::models::TEModelParameters;
 use ark_ff::fields::{Field, PrimeField};
 use ark_nonnative_field::NonNativeFieldVar;
-use ark_r1cs_std::alloc::AllocVar;
+use ark_r1cs_std::alloc::{AllocVar, AllocationMode};
 use ark_r1cs_std::eq::EqGadget;
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_r1cs_std::groups::curves::twisted_edwards::AffineVar;
 use ark_relations::r1cs::{Namespace, SynthesisError};
+use ark_relations::ns;
 #[cfg(test)]
 use rand::thread_rng;
 use rand::{CryptoRng, Rng};
 use std::marker::PhantomData;
+use std::borrow::Borrow;
 use std::ops::{Add, Neg, Sub};
 
 pub trait EncryptionScheme {
@@ -195,6 +197,28 @@ where
     }
 }
 
+pub struct MultiBasePedersenTypeWitness<P: TEModelParameters> where P::BaseField: PrimeField {
+    pub rejection_sampler: FpVar<P::BaseField>,
+    pub curve_y: NonNativeFieldVar<P::ScalarField, P::BaseField>,
+}
+
+impl<P: TEModelParameters> AllocVar<(P::BaseField, P::ScalarField), P::BaseField> for MultiBasePedersenTypeWitness<P> where P::BaseField: PrimeField {
+    fn new_variable<U: Borrow<(P::BaseField, P::ScalarField)>>(
+        cs: impl Into<Namespace<P::BaseField>>,
+        f: impl FnOnce() -> Result<U, SynthesisError>,
+        mode: AllocationMode,
+    ) -> Result<Self, SynthesisError> {
+        let cs = cs.into().cs();
+        f().and_then(|r| {
+            let (r, y) = r.borrow();
+            Ok(MultiBasePedersenTypeWitness {
+                rejection_sampler: FpVar::new_variable(ns!(cs, "rejection_sampler"), || Ok(r), mode)?,
+                curve_y: NonNativeFieldVar::new_variable(ns!(cs, "curve_y"), || Ok(y), mode)?,
+            })
+        })
+    }
+}
+
 #[allow(unused_variables)]
 impl<
         P: TEModelParameters,
@@ -211,10 +235,7 @@ where
     P::BaseField: PrimeField,
 {
     type CommitmentVar = AffineVar<P, FpVar<P::BaseField>>;
-    type TypeWitnessVar = (
-        FpVar<P::BaseField>,
-        NonNativeFieldVar<P::ScalarField, P::BaseField>,
-    );
+    type TypeWitnessVar = MultiBasePedersenTypeWitness<P>;
 
     fn verify(
         type_: &FpVar<P::BaseField>,

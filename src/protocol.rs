@@ -8,21 +8,20 @@ use ark_crypto_primitives::merkle_tree::{self, IdentityDigestConverter, Path};
 use ark_ec::models::twisted_edwards_extended::GroupAffine;
 use ark_ec::models::{ModelParameters, TEModelParameters};
 use ark_ff::bytes::{FromBytes, ToBytes};
-use ark_ff::fields::{Field, PrimeField};
+use ark_ff::fields::PrimeField;
 use ark_ff::{UniformRand, Zero};
-use ark_nonnative_field::NonNativeFieldVar;
+use ark_nonnative_field::{NonNativeFieldVar, AllocatedNonNativeFieldVar, params::OptimizationType};
 use ark_r1cs_std::alloc::{AllocVar, AllocationMode};
 use ark_r1cs_std::eq::EqGadget;
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_r1cs_std::groups::curves::twisted_edwards::AffineVar;
 use ark_relations::r1cs::{
-    self, ConstraintSynthesizer, ConstraintSystemRef, Namespace, SynthesisError,
+    self, ConstraintSynthesizer, ConstraintSystemRef, Namespace, SynthesisError, OptimizationGoal
 };
 use ark_relations::{self, ns};
 use ark_snark::{CircuitSpecificSetupSNARK, SNARK};
 use rand::{CryptoRng, Rng};
 use std::borrow::Borrow;
-use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::hash::Hash;
 use std::io::{self, Cursor, Read, Write};
@@ -57,14 +56,23 @@ pub trait ZSwapParameters {
         LeafParamVar = Self::CryptoParametersVar,
         CompressionParamVar = Self::CryptoParametersVar,
     >;
-    //type MerkleTreeGadget: merkle_tree::constraints::ConfigGadget<MerkleTreeConfig<Self>, Self::F, Leaf=[FpVar<Self::F>], LeafDigest=FpVar<Self::F>, InnerDigest=FpVar<Self::F>>;
     type HomomorphicCommitment: HomomorphicCommitmentScheme<
         Self::F,
         EmbeddedField<Self>,
         EmbeddedField<Self>,
     >;
+    type HomomorphicCommitmentGadget: HomomorphicCommitmentSchemeGadget<
+        Self::F,
+        FpVar<Self::F>,
+        NonNativeFieldVar<EmbeddedField<Self>, Self::F>,
+        NonNativeFieldVar<EmbeddedField<Self>, Self::F>,
+        ParametersVar=Self::CryptoParametersVar,
+    >;
     type SNARK: CircuitSpecificSetupSNARK<Self::F>;
 }
+
+const OPTIMIZATION_GOAL: OptimizationGoal = OptimizationGoal::Constraints;
+const OPTIMIZATION_TYPE: OptimizationType = OptimizationType::Constraints;
 
 struct MerkleTreeConfigGadget<P>(PhantomData<P>);
 
@@ -99,6 +107,8 @@ impl ZSwapParameters for DefaultParameters {
     type MerkleTree = crate::poseidon::Poseidon;
     type HomomorphicCommitment =
         crate::primitives::MultiBasePedersen<Self::G, crate::poseidon::Poseidon>;
+    type HomomorphicCommitmentGadget =
+        crate::primitives::MultiBasePedersenGadget<Self::G, crate::poseidon::Poseidon, crate::poseidon::Poseidon>;
     type SNARK =
         ::ark_groth16::Groth16<::ark_ec::models::bls12::Bls12<::ark_bls12_381::Parameters>>;
 }
@@ -153,8 +163,18 @@ pub struct Attributes {
 }
 
 impl Attributes {
-    fn as_field<F: Field>(&self) -> F {
-        ((self.value as u128) << 64 | (self.type_ as u128)).into()
+    fn as_field<P: ZSwapParameters>(&self) -> P::F {
+        let value = {
+            let embedded: EmbeddedField<P> = self.value.into();
+            let mut parts = AllocatedNonNativeFieldVar::get_limbs_representations(&embedded, OPTIMIZATION_TYPE)
+                .expect("Getting representation of embedded field should succeed");
+            while parts.len() > 1 {
+                let (a, b) = (parts.pop().unwrap(), parts.pop().unwrap());
+                parts.push(P::Hash::compress(&a, &b));
+            }
+            parts[0]
+        };
+        P::Hash::compress(&value, &self.type_.into())
     }
 }
 
@@ -204,7 +224,7 @@ impl<P: ZSwapParameters> OneTimeAccount for ZSwap<P> {
         r: &Self::Randomness,
     ) -> Self::Note {
         let c1 = P::Hash::commit((a_pk, &r.rn), &r.rk);
-        P::Hash::commit((&c1, &attribs.as_field()), &r.rc)
+        P::Hash::commit((&c1, &attribs.as_field::<P>()), &r.rc)
     }
 
     fn enc<R: Rng + CryptoRng + ?Sized>(
@@ -231,7 +251,7 @@ impl<P: ZSwapParameters> OneTimeAccount for ZSwap<P> {
         // Verify comm
         let a_pk = Self::derive_public_key(sk);
         let c1 = P::Hash::commit((&a_pk, &r.rn), &r.rk);
-        let c2 = P::Hash::commit((&c1, &a.as_field()), &r.rc);
+        let c2 = P::Hash::commit((&c1, &a.as_field::<P>()), &r.rc);
         if &c2 != note {
             None
         } else {
@@ -276,17 +296,17 @@ impl<F: PrimeField> AllocVar<Randomness<F>, F> for RandomnessVar<F> {
         f().and_then(|r| {
             Ok(RandomnessVar {
                 rk: FpVar::<F>::new_variable(
-                    ark_relations::ns!(cs, "rk"),
+                    ns!(cs, "rk"),
                     || Ok(r.borrow().rk),
                     mode,
                 )?,
                 rc: FpVar::<F>::new_variable(
-                    ark_relations::ns!(cs, "rc"),
+                    ns!(cs, "rc"),
                     || Ok(r.borrow().rc),
                     mode,
                 )?,
                 rn: FpVar::<F>::new_variable(
-                    ark_relations::ns!(cs, "rn"),
+                    ns!(cs, "rn"),
                     || Ok(r.borrow().rn),
                     mode,
                 )?,
@@ -295,39 +315,40 @@ impl<F: PrimeField> AllocVar<Randomness<F>, F> for RandomnessVar<F> {
     }
 }
 
-pub struct AttributesVar<F: PrimeField> {
-    pub value: FpVar<F>,
-    pub type_: FpVar<F>,
+pub struct AttributesVar<P: ZSwapParameters> {
+    pub value: AllocatedNonNativeFieldVar<EmbeddedField<P>, P::F>,
+    pub type_: FpVar<P::F>,
 }
 
-impl<F: PrimeField> AttributesVar<F> {
-    fn as_field(&self) -> Result<FpVar<F>, SynthesisError> {
-        let two_pow_64 = FpVar::<F>::Constant((u64::MAX as u128 + 1).into());
-        Ok(self.value.clone() * two_pow_64 + self.type_.clone())
+impl<P: ZSwapParameters> AttributesVar<P> {
+    fn as_field(&self, params: &<P::HashGadget as ParameterGadget<P::F>>::ParametersVar) -> Result<FpVar<P::F>, SynthesisError> {
+        let mut parts = self.value.limbs.clone();
+        while parts.len() > 1 {
+            let (a, b) = (parts.pop().unwrap(), parts.pop().unwrap());
+            parts.push(P::HashGadget::compress(&params, &a, &b)?);
+        }
+        P::HashGadget::compress(&params, &parts[0], &self.type_)
     }
 }
 
-impl<F: PrimeField> AllocVar<Attributes, F> for AttributesVar<F> {
+impl<P: ZSwapParameters> AllocVar<Attributes, P::F> for AttributesVar<P> {
     fn new_variable<U: Borrow<Attributes>>(
-        cs: impl Into<Namespace<F>>,
+        cs: impl Into<Namespace<P::F>>,
         f: impl FnOnce() -> Result<U, SynthesisError>,
         mode: AllocationMode,
     ) -> Result<Self, SynthesisError> {
         let cs = cs.into().cs();
         f().and_then(|a| {
-            let two_pow_64 = FpVar::<F>::Constant((u64::MAX as u128 + 1).into());
-            let value = FpVar::<F>::new_variable(
+            let value = AllocatedNonNativeFieldVar::<EmbeddedField<P>, P::F>::new_variable(
                 ark_relations::ns!(cs, "value"),
-                || Ok(F::from(a.borrow().value)),
+                || Ok(EmbeddedField::<P>::from(a.borrow().value)),
                 mode,
             )?;
-            value.enforce_cmp(&two_pow_64, Ordering::Less, false)?;
-            let type_ = FpVar::<F>::new_variable(
+            let type_ = FpVar::<P::F>::new_variable(
                 ark_relations::ns!(cs, "type"),
-                || Ok(F::from(a.borrow().type_)),
+                || Ok(P::F::from(a.borrow().type_)),
                 mode,
             )?;
-            type_.enforce_cmp(&two_pow_64, Ordering::Less, false)?;
             Ok(AttributesVar { value, type_ })
         })
     }
@@ -340,7 +361,7 @@ impl<P: ZSwapParameters> OTAGadget<P::F> for ZSwap<P> {
     type SecretKeyVar = SecretKeyVar<P::F>;
     type PublicKeyVar = FpVar<P::F>;
     type RandomnessVar = RandomnessVar<P::F>;
-    type AttributesVar = AttributesVar<P::F>;
+    type AttributesVar = AttributesVar<P>;
     type NoteVar = FpVar<P::F>;
     type NullifierVar = FpVar<P::F>;
 
@@ -359,7 +380,7 @@ impl<P: ZSwapParameters> OTAGadget<P::F> for ZSwap<P> {
         r: &Self::RandomnessVar,
     ) -> Result<Self::NoteVar, SynthesisError> {
         let c1 = P::HashGadget::commit(params, (pk, &r.rn), &r.rk)?;
-        P::HashGadget::commit(params, (&c1, &attribs.as_field()?), &r.rc)
+        P::HashGadget::commit(params, (&c1, &attribs.as_field(params)?), &r.rc)
     }
 
     fn nul_eval_gadget(
@@ -417,7 +438,7 @@ struct LangSpend<P: ZSwapParameters> {
     path: Path<MerkleTreeConfig<P>>,
     sk: P::F,
     type_: P::F,
-    value: P::F,
+    value: EmbeddedField<P>,
     r: <ZSwap<P> as OneTimeAccount>::Randomness,
     rc: EmbeddedField<P>,
 }
@@ -455,8 +476,11 @@ impl<P: ZSwapParameters> ConstraintSynthesizer<P::F> for LangSpend<P> {
                 Ok(self.path)
             })?;
         let sk = SecretKeyVar(FpVar::new_witness(ns!(cs, "sk"), || Ok(self.sk))?);
+        let (_, type_wit) = P::HomomorphicCommitment::commit(&self.type_, &self.value, &self.rc);
         let type_ = FpVar::new_witness(ns!(cs, "type"), || Ok(self.type_))?;
-        let value = FpVar::new_witness(ns!(cs, "value"), || Ok(self.value))?;
+        //let type_wit = NonNativeFieldVar::new_witness(ns!(cs, "type_wit"), || Ok(type_wit));
+        let value: EmbeddedField<P> = self.value.into();
+        let value = AllocatedNonNativeFieldVar::new_witness(ns!(cs, "value"), || Ok(value))?;
         let r = RandomnessVar::new_witness(ns!(cs, "r"), || Ok(self.r))?;
         let rc = NonNativeFieldVar::new_witness(ns!(cs, "rc"), || Ok(self.rc))?;
 
@@ -467,6 +491,8 @@ impl<P: ZSwapParameters> ConstraintSynthesizer<P::F> for LangSpend<P> {
 
         let root2 = path.calculate_root(&params, &params, &[note][..])?;
         st.enforce_equal(&root2)?;
+
+        // let com2 = P::HomomorphicCommitmentGadget::verify(type_, type_wit,
 
         unimplemented!()
     }
