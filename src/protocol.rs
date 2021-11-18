@@ -27,100 +27,74 @@ use std::hash::Hash;
 use std::io::{self, Cursor, Read, Write};
 use std::marker::PhantomData;
 
+
+type DpF = ::ark_bls12_381::Fr;
+type DpG = ::ark_ed_on_bls12_381::EdwardsParameters;
+type DpHash = crate::poseidon::Poseidon;
+type DpHashGadget = crate::poseidon::Poseidon;
+type DpEncrypt = crate::primitives::ECIES;
+type DpCryptoParameters = ::ark_sponge::poseidon::PoseidonParameters<DpF>;
+type DpCryptoParametersVar =
+    ::ark_crypto_primitives::crh::poseidon::constraints::CRHParametersVar<DpF>;
+type DpMerkleTree = crate::poseidon::Poseidon;
+type DpHomomorphicCommitment =
+    crate::primitives::MultiBasePedersen<DpG, crate::poseidon::Poseidon>;
+type DpSNARK =
+    ::ark_groth16::Groth16<::ark_ec::models::bls12::Bls12<::ark_bls12_381::Parameters>>;
+
+
 #[allow(type_alias_bounds)]
-pub type EmbeddedField<P: ZSwapParameters> = <P::G as ModelParameters>::ScalarField;
+pub type EmbeddedField = <DpG as ModelParameters>::ScalarField;
 #[allow(type_alias_bounds)]
-pub type MerkleTreeConfig<P: ZSwapParameters> = <P::MerkleTree as MerkleTreeParams<
-    P::F,
-    <P::Hash as CompressionFunction<P::F>>::CRHScheme,
-    <P::Hash as CompressionFunction<P::F>>::TwoToOneCRHScheme,
+pub type MerkleTreeConfig = <DpMerkleTree as MerkleTreeParams<
+    DpF,
+    <DpHash as CompressionFunction<DpF>>::CRHScheme,
+    <DpHash as CompressionFunction<DpF>>::TwoToOneCRHScheme,
 >>::Config;
 
-pub trait ZSwapParameters {
-    type F: PrimeField;
-    type G: TEModelParameters<BaseField = Self::F>;
-    type Hash: CompressionFunction<Self::F>
-        + CommitmentScheme<Self::F>
-        + ParameterFunction<Parameters = Self::CryptoParameters>;
-
-    type HashGadget: CompressionFunctionGadget<FpVar<Self::F>, Self::F, Self::Hash, Self::F>
-        + CommitmentSchemeGadget<FpVar<Self::F>, Self::F, Self::Hash, Self::F>
-        + ParameterGadget<Self::F, ParametersVar = Self::CryptoParametersVar>;
-    type Encrypt: EncryptionScheme;
-    type CryptoParameters;
-    type CryptoParametersVar: AllocVar<Self::CryptoParameters, Self::F>;
-    type MerkleTree: MerkleTreeParams<
-        Self::F,
-        <Self::Hash as CompressionFunction<Self::F>>::CRHScheme,
-        <Self::Hash as CompressionFunction<Self::F>>::TwoToOneCRHScheme,
-        LeafParamVar = Self::CryptoParametersVar,
-        CompressionParamVar = Self::CryptoParametersVar,
-    >;
-    type HomomorphicCommitment: HomomorphicCommitmentScheme<
-        Self::F,
-        EmbeddedField<Self>,
-        EmbeddedField<Self>,
-    >;
-    type HomomorphicCommitmentGadget: HomomorphicCommitmentSchemeGadget<
-        Self::F,
-        FpVar<Self::F>,
-        NonNativeFieldVar<EmbeddedField<Self>, Self::F>,
-        NonNativeFieldVar<EmbeddedField<Self>, Self::F>,
-        ParametersVar=Self::CryptoParametersVar,
-    >;
-    type SNARK: CircuitSpecificSetupSNARK<Self::F>;
-}
+struct MerkleTreeConfigGadget();
 
 const OPTIMIZATION_GOAL: OptimizationGoal = OptimizationGoal::Constraints;
 const OPTIMIZATION_TYPE: OptimizationType = OptimizationType::Constraints;
 
-struct MerkleTreeConfigGadget<P>(PhantomData<P>);
 
-impl<P: ZSwapParameters> merkle_tree::constraints::ConfigGadget<MerkleTreeConfig<P>, P::F>
-    for MerkleTreeConfigGadget<P>
+impl merkle_tree::constraints::ConfigGadget<MerkleTreeConfig, DpF>
+    for MerkleTreeConfigGadget
 {
-    type Leaf = [FpVar<P::F>];
-    type LeafDigest = FpVar<P::F>;
-    type LeafInnerConverter = IdentityDigestConverter<FpVar<P::F>>;
-    type InnerDigest = FpVar<P::F>;
+    type Leaf = [FpVar<DpF>];
+    type LeafDigest = FpVar<DpF>;
+    type LeafInnerConverter = IdentityDigestConverter<FpVar<DpF>>;
+    type InnerDigest = FpVar<DpF>;
     type LeafHash =
-        <P::HashGadget as CompressionFunctionGadget<FpVar<P::F>, P::F, P::Hash, P::F>>::CRHScheme;
-    type TwoToOneHash = <P::HashGadget as CompressionFunctionGadget<
-        FpVar<P::F>,
-        P::F,
-        P::Hash,
-        P::F,
+        <DpHashGadget as CompressionFunctionGadget<FpVar<DpF>, DpF, DpHash, DpF>>::CRHScheme;
+    type TwoToOneHash = <DpHashGadget as CompressionFunctionGadget<
+        FpVar<DpF>,
+        DpF,
+        DpHash,
+        DpF,
     >>::TwoToOneCRHScheme;
 }
 
-pub struct DefaultParameters;
 
-impl ZSwapParameters for DefaultParameters {
-    type F = ::ark_bls12_381::Fr;
-    type G = ::ark_ed_on_bls12_381::EdwardsParameters;
-    type Hash = crate::poseidon::Poseidon;
-    type HashGadget = crate::poseidon::Poseidon;
-    type Encrypt = crate::primitives::ECIES;
-    type CryptoParameters = ::ark_sponge::poseidon::PoseidonParameters<Self::F>;
-    type CryptoParametersVar =
-        ::ark_crypto_primitives::crh::poseidon::constraints::CRHParametersVar<Self::F>;
-    type MerkleTree = crate::poseidon::Poseidon;
-    type HomomorphicCommitment =
-        crate::primitives::MultiBasePedersen<Self::G, crate::poseidon::Poseidon>;
-    type HomomorphicCommitmentGadget =
-        crate::primitives::MultiBasePedersenGadget<Self::G, crate::poseidon::Poseidon, crate::poseidon::Poseidon>;
-    type SNARK =
-        ::ark_groth16::Groth16<::ark_ec::models::bls12::Bls12<::ark_bls12_381::Parameters>>;
-}
+////////////////////////////////////////////////////////////////////////////////
+// ZSwap
+////////////////////////////////////////////////////////////////////////////////
 
-pub struct ZSwap<P>(PhantomData<P>);
 
-impl<P: ZSwapParameters> ZSwap<P> {
+pub struct ZSwap();
+
+impl ZSwap {
     /// Randomly sampled general domain separator for this protocol
     const DOMAIN_SEP: u64 = 1_497_537_315 << 32;
     const DOMAIN_SEP_PK_DERIV: u64 = Self::DOMAIN_SEP | 1;
     const DOMAIN_SEP_INVALIDATOR: u64 = Self::DOMAIN_SEP | 2;
 }
+
+
+////////////////////////////////////////////////////////////////////////////////
+// Randomness
+////////////////////////////////////////////////////////////////////////////////
+
 
 #[derive(Default)]
 pub struct Randomness<F> {
@@ -157,24 +131,29 @@ impl<F: UniformRand> UniformRand for Randomness<F> {
     }
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// Attributes
+////////////////////////////////////////////////////////////////////////////////
+
+
 pub struct Attributes {
     pub value: u64,
     pub type_: u64,
 }
 
 impl Attributes {
-    fn as_field<P: ZSwapParameters>(&self) -> P::F {
+    fn as_field(&self) -> DpF {
         let value = {
-            let embedded: EmbeddedField<P> = self.value.into();
+            let embedded: EmbeddedField = self.value.into();
             let mut parts = AllocatedNonNativeFieldVar::get_limbs_representations(&embedded, OPTIMIZATION_TYPE)
                 .expect("Getting representation of embedded field should succeed");
             while parts.len() > 1 {
                 let (a, b) = (parts.pop().unwrap(), parts.pop().unwrap());
-                parts.push(P::Hash::compress(&a, &b));
+                parts.push(<DpHash as CompressionFunction<_>>::compress(&a, &b));
             }
             parts[0]
         };
-        P::Hash::compress(&value, &self.type_.into())
+        <DpHash as CompressionFunction<_>>::compress(&value, &self.type_.into())
     }
 }
 
@@ -194,20 +173,20 @@ impl FromBytes for Attributes {
     }
 }
 
-impl<P: ZSwapParameters> OneTimeAccount for ZSwap<P> {
-    type SecretKey = (P::F, <P::Encrypt as EncryptionScheme>::SecretKey);
-    type PublicKey = (P::F, <P::Encrypt as EncryptionScheme>::PublicKey);
-    type PartialPublicKey = P::F;
-    type Randomness = Randomness<P::F>;
+impl OneTimeAccount for ZSwap {
+    type SecretKey = (DpF, <DpEncrypt as EncryptionScheme>::SecretKey);
+    type PublicKey = (DpF, <DpEncrypt as EncryptionScheme>::PublicKey);
+    type PartialPublicKey = DpF;
+    type Randomness = Randomness<DpF>;
     /// (color, value), where color is rejection-sampled preimage of the corresponding base.
     type Attributes = Attributes;
-    type Note = P::F;
+    type Note = DpF;
     type Ciphertext = Vec<u8>;
-    type Nullifier = P::F;
+    type Nullifier = DpF;
 
     fn keygen<R: Rng + CryptoRng + ?Sized>(rng: &mut R) -> (Self::PublicKey, Self::SecretKey) {
-        let a_sk = P::F::rand(rng);
-        let (pk_enc, sk_enc) = P::Encrypt::keygen(rng);
+        let a_sk = DpF::rand(rng);
+        let (pk_enc, sk_enc) = DpEncrypt::keygen(rng);
         let sk = (a_sk, sk_enc);
         let a_pk = Self::derive_public_key(&sk);
         let pk = (a_pk, pk_enc);
@@ -215,7 +194,7 @@ impl<P: ZSwapParameters> OneTimeAccount for ZSwap<P> {
     }
 
     fn derive_public_key(sk: &Self::SecretKey) -> Self::PartialPublicKey {
-        P::Hash::compress(&Self::DOMAIN_SEP_PK_DERIV.into(), &sk.0)
+        <DpHash as CompressionFunction<_>>::compress(&Self::DOMAIN_SEP_PK_DERIV.into(), &sk.0)
     }
 
     fn gen(
@@ -223,8 +202,8 @@ impl<P: ZSwapParameters> OneTimeAccount for ZSwap<P> {
         attribs: &Self::Attributes,
         r: &Self::Randomness,
     ) -> Self::Note {
-        let c1 = P::Hash::commit((a_pk, &r.rn), &r.rk);
-        P::Hash::commit((&c1, &attribs.as_field::<P>()), &r.rc)
+        let c1 = <DpHash as CommitmentScheme<_>>::commit((a_pk, &r.rn), &r.rk);
+        <DpHash as CommitmentScheme<_>>::commit((&c1, &attribs.as_field()), &r.rc)
     }
 
     fn enc<R: Rng + CryptoRng + ?Sized>(
@@ -237,7 +216,7 @@ impl<P: ZSwapParameters> OneTimeAccount for ZSwap<P> {
         r.write(&mut message)
             .and_then(|_| attribs.write(&mut message))
             .expect("Write to Vec should succeed");
-        P::Encrypt::encrypt(pk_enc, &message, rng)
+        DpEncrypt::encrypt(pk_enc, &message, rng)
     }
 
     fn receive(
@@ -245,13 +224,13 @@ impl<P: ZSwapParameters> OneTimeAccount for ZSwap<P> {
         ciphertext: &Self::Ciphertext,
         sk: &Self::SecretKey,
     ) -> Option<(Self::Attributes, Self::Randomness)> {
-        let mut plaintext = Cursor::new(P::Encrypt::decrypt(&sk.1, ciphertext)?);
+        let mut plaintext = Cursor::new(DpEncrypt::decrypt(&sk.1, ciphertext)?);
         let r = Self::Randomness::read(&mut plaintext).ok()?;
         let a = Attributes::read(&mut plaintext).ok()?;
         // Verify comm
         let a_pk = Self::derive_public_key(sk);
-        let c1 = P::Hash::commit((&a_pk, &r.rn), &r.rk);
-        let c2 = P::Hash::commit((&c1, &a.as_field::<P>()), &r.rc);
+        let c1 = <DpHash as CommitmentScheme<_>>::commit((&a_pk, &r.rn), &r.rk);
+        let c2 = <DpHash as CommitmentScheme<_>>::commit((&c1, &a.as_field()), &r.rc);
         if &c2 != note {
             None
         } else {
@@ -260,8 +239,8 @@ impl<P: ZSwapParameters> OneTimeAccount for ZSwap<P> {
     }
 
     fn nul_eval((a_sk, _): &Self::SecretKey, r: &Self::Randomness) -> Self::Nullifier {
-        let c1 = P::Hash::compress(a_sk, &r.rn);
-        P::Hash::compress(&Self::DOMAIN_SEP_INVALIDATOR.into(), &c1)
+        let c1 = <DpHash as CompressionFunction<_>>::compress(a_sk, &r.rn);
+        <DpHash as CompressionFunction<_>>::compress(&Self::DOMAIN_SEP_INVALIDATOR.into(), &c1)
     }
 }
 
@@ -315,38 +294,38 @@ impl<F: PrimeField> AllocVar<Randomness<F>, F> for RandomnessVar<F> {
     }
 }
 
-pub struct AttributesVar<P: ZSwapParameters> {
-    pub value: AllocatedNonNativeFieldVar<EmbeddedField<P>, P::F>,
-    pub type_: FpVar<P::F>,
+pub struct AttributesVar {
+    pub value: AllocatedNonNativeFieldVar<EmbeddedField, DpF>,
+    pub type_: FpVar<DpF>,
 }
 
-impl<P: ZSwapParameters> AttributesVar<P> {
-    fn as_field(&self, params: &<P::HashGadget as ParameterGadget<P::F>>::ParametersVar) -> Result<FpVar<P::F>, SynthesisError> {
+impl AttributesVar {
+    fn as_field(&self, params: &<DpHashGadget as ParameterGadget<DpF>>::ParametersVar) -> Result<FpVar<DpF>, SynthesisError> {
         let mut parts = self.value.limbs.clone();
         while parts.len() > 1 {
             let (a, b) = (parts.pop().unwrap(), parts.pop().unwrap());
-            parts.push(P::HashGadget::compress(&params, &a, &b)?);
+            parts.push(<DpHashGadget as CompressionFunctionGadget<_,_,_,_>>::compress(&params, &a, &b)?);
         }
-        P::HashGadget::compress(&params, &parts[0], &self.type_)
+        <DpHashGadget as CompressionFunctionGadget<_,_,_,_>>::compress(&params, &parts[0], &self.type_)
     }
 }
 
-impl<P: ZSwapParameters> AllocVar<Attributes, P::F> for AttributesVar<P> {
+impl AllocVar<Attributes, DpF> for AttributesVar {
     fn new_variable<U: Borrow<Attributes>>(
-        cs: impl Into<Namespace<P::F>>,
+        cs: impl Into<Namespace<DpF>>,
         f: impl FnOnce() -> Result<U, SynthesisError>,
         mode: AllocationMode,
     ) -> Result<Self, SynthesisError> {
         let cs = cs.into().cs();
         f().and_then(|a| {
-            let value = AllocatedNonNativeFieldVar::<EmbeddedField<P>, P::F>::new_variable(
+            let value = AllocatedNonNativeFieldVar::<EmbeddedField, DpF>::new_variable(
                 ark_relations::ns!(cs, "value"),
-                || Ok(EmbeddedField::<P>::from(a.borrow().value)),
+                || Ok(EmbeddedField::from(a.borrow().value)),
                 mode,
             )?;
-            let type_ = FpVar::<P::F>::new_variable(
+            let type_ = FpVar::<DpF>::new_variable(
                 ark_relations::ns!(cs, "type"),
-                || Ok(P::F::from(a.borrow().type_)),
+                || Ok(DpF::from(a.borrow().type_)),
                 mode,
             )?;
             Ok(AttributesVar { value, type_ })
@@ -354,23 +333,23 @@ impl<P: ZSwapParameters> AllocVar<Attributes, P::F> for AttributesVar<P> {
     }
 }
 
-impl<P: ZSwapParameters> OTAGadget<P::F> for ZSwap<P> {
-    type KeyDeriveParams = <P::HashGadget as ParameterGadget<P::F>>::ParametersVar;
-    type GenParams = <P::HashGadget as ParameterGadget<P::F>>::ParametersVar;
-    type TagEvalParams = <P::HashGadget as ParameterGadget<P::F>>::ParametersVar;
-    type SecretKeyVar = SecretKeyVar<P::F>;
-    type PublicKeyVar = FpVar<P::F>;
-    type RandomnessVar = RandomnessVar<P::F>;
-    type AttributesVar = AttributesVar<P>;
-    type NoteVar = FpVar<P::F>;
-    type NullifierVar = FpVar<P::F>;
+impl OTAGadget<DpF> for ZSwap {
+    type KeyDeriveParams = <DpHashGadget as ParameterGadget<DpF>>::ParametersVar;
+    type GenParams = <DpHashGadget as ParameterGadget<DpF>>::ParametersVar;
+    type TagEvalParams = <DpHashGadget as ParameterGadget<DpF>>::ParametersVar;
+    type SecretKeyVar = SecretKeyVar<DpF>;
+    type PublicKeyVar = FpVar<DpF>;
+    type RandomnessVar = RandomnessVar<DpF>;
+    type AttributesVar = AttributesVar;
+    type NoteVar = FpVar<DpF>;
+    type NullifierVar = FpVar<DpF>;
 
     fn derive_public_key_gadget(
         hash_params: &Self::KeyDeriveParams,
         sk: &Self::SecretKeyVar,
     ) -> Result<Self::PublicKeyVar, SynthesisError> {
         let domain_sep_var = FpVar::Constant(Self::DOMAIN_SEP_PK_DERIV.into());
-        P::HashGadget::compress(hash_params, &domain_sep_var, &sk.0)
+        <DpHashGadget as CompressionFunctionGadget<_,_,_,_>>::compress(hash_params, &domain_sep_var, &sk.0)
     }
 
     fn gen_gadget(
@@ -379,8 +358,8 @@ impl<P: ZSwapParameters> OTAGadget<P::F> for ZSwap<P> {
         attribs: &Self::AttributesVar,
         r: &Self::RandomnessVar,
     ) -> Result<Self::NoteVar, SynthesisError> {
-        let c1 = P::HashGadget::commit(params, (pk, &r.rn), &r.rk)?;
-        P::HashGadget::commit(params, (&c1, &attribs.as_field(params)?), &r.rc)
+        let c1 = <DpHashGadget as CommitmentSchemeGadget<_,_,_,_>>::commit(params, (pk, &r.rn), &r.rk)?;
+        <DpHashGadget as CommitmentSchemeGadget<_,_,_,_>>::commit(params, (&c1, &attribs.as_field(params)?), &r.rc)
     }
 
     fn nul_eval_gadget(
@@ -388,27 +367,27 @@ impl<P: ZSwapParameters> OTAGadget<P::F> for ZSwap<P> {
         sk: &Self::SecretKeyVar,
         r: &Self::RandomnessVar,
     ) -> Result<Self::NullifierVar, SynthesisError> {
-        let c1 = P::HashGadget::compress(params, &sk.0, &r.rn)?;
+        let c1 = <DpHashGadget as CompressionFunctionGadget<_,_,_,_>>::compress(params, &sk.0, &r.rn)?;
         let domain_sep_invalidator = FpVar::Constant(Self::DOMAIN_SEP_INVALIDATOR.into());
-        P::HashGadget::compress(params, &domain_sep_invalidator, &c1)
+        <DpHashGadget as CompressionFunctionGadget<_,_,_,_>>::compress(params, &domain_sep_invalidator, &c1)
     }
 }
 
 const MERKLE_TREE_HEIGHT: usize = 32;
 
-pub struct ZSwapState<P: ZSwapParameters> {
-    notes: HashSet<<ZSwap<P> as OneTimeAccount>::Note>,
-    nullifiers: HashSet<<ZSwap<P> as OneTimeAccount>::Nullifier>,
-    merkle_tree: SparseMerkleTree<MerkleTreeConfig<P>>,
+pub struct ZSwapState {
+    notes: HashSet<<ZSwap as OneTimeAccount>::Note>,
+    nullifiers: HashSet<<ZSwap as OneTimeAccount>::Nullifier>,
+    merkle_tree: SparseMerkleTree<MerkleTreeConfig>,
     merkle_tree_next_index: usize,
-    pub roots: Vec<P::F>,
+    pub roots: Vec<DpF>,
 }
 
-impl<P: ZSwapParameters + 'static> ZSwapState<P> {
+impl ZSwapState {
     pub fn new() -> Self {
         let merkle_tree = SparseMerkleTree::blank(
-            P::MerkleTree::leaf_param(),
-            P::MerkleTree::compression_param(),
+            DpMerkleTree::leaf_param(),
+            DpMerkleTree::compression_param(),
             MERKLE_TREE_HEIGHT,
         );
         ZSwapState {
@@ -421,29 +400,29 @@ impl<P: ZSwapParameters + 'static> ZSwapState<P> {
     }
 }
 
-pub struct ZSwapPublicParams<P: ZSwapParameters> {
-    spend_proving_key: <P::SNARK as SNARK<P::F>>::ProvingKey,
-    spend_verifying_key: <P::SNARK as SNARK<P::F>>::VerifyingKey,
-    output_proving_key: <P::SNARK as SNARK<P::F>>::ProvingKey,
-    output_verifying_key: <P::SNARK as SNARK<P::F>>::VerifyingKey,
+pub struct ZSwapPublicParams {
+    spend_proving_key: <DpSNARK as SNARK<DpF>>::ProvingKey,
+    spend_verifying_key: <DpSNARK as SNARK<DpF>>::VerifyingKey,
+    output_proving_key: <DpSNARK as SNARK<DpF>>::ProvingKey,
+    output_verifying_key: <DpSNARK as SNARK<DpF>>::VerifyingKey,
 }
 
-struct LangSpend<P: ZSwapParameters> {
+struct LangSpend {
     // Public inputs
-    st: P::F,
-    nul: P::F,
-    com: GroupAffine<P::G>,
+    st: DpF,
+    nul: DpF,
+    com: GroupAffine<DpG>,
 
     // Witnesses
-    path: Path<MerkleTreeConfig<P>>,
-    sk: P::F,
-    type_: P::F,
-    value: EmbeddedField<P>,
-    r: <ZSwap<P> as OneTimeAccount>::Randomness,
-    rc: EmbeddedField<P>,
+    path: Path<MerkleTreeConfig>,
+    sk: DpF,
+    type_: DpF,
+    value: EmbeddedField,
+    r: <ZSwap as OneTimeAccount>::Randomness,
+    rc: EmbeddedField,
 }
 
-impl<P: ZSwapParameters> LangSpend<P> {
+impl LangSpend {
     // We need a blank circuit for constraint generation
     fn new() -> Self {
         LangSpend {
@@ -465,96 +444,104 @@ impl<P: ZSwapParameters> LangSpend<P> {
     }
 }
 
-impl<P: ZSwapParameters> ConstraintSynthesizer<P::F> for LangSpend<P> {
-    fn generate_constraints(self, cs: ConstraintSystemRef<P::F>) -> r1cs::Result<()> {
+impl ConstraintSynthesizer<DpF> for LangSpend {
+    fn generate_constraints(self, cs: ConstraintSystemRef<DpF>) -> r1cs::Result<()> {
         let st = FpVar::new_input(ns!(cs, "st"), || Ok(self.st))?;
         let nul = FpVar::new_input(ns!(cs, "nul"), || Ok(self.nul))?;
-        let com = AffineVar::<_, FpVar<P::F>>::new_input(ns!(cs, "com"), || Ok(self.com))?;
+        let com = AffineVar::<_, FpVar<DpF>>::new_input(ns!(cs, "com"), || Ok(self.com))?;
 
         let path =
-            PathVar::<_, P::F, MerkleTreeConfigGadget<P>>::new_witness(ns!(cs, "path"), || {
+            PathVar::<_, DpF, MerkleTreeConfigGadget>::new_witness(ns!(cs, "path"), || {
                 Ok(self.path)
             })?;
         let sk = SecretKeyVar(FpVar::new_witness(ns!(cs, "sk"), || Ok(self.sk))?);
-        let (_, type_wit) = P::HomomorphicCommitment::commit(&self.type_, &self.value, &self.rc);
+        let (_, type_wit) = DpHomomorphicCommitment::commit(&self.type_, &self.value, &self.rc);
         let type_ = FpVar::new_witness(ns!(cs, "type"), || Ok(self.type_))?;
         //let type_wit = NonNativeFieldVar::new_witness(ns!(cs, "type_wit"), || Ok(type_wit));
-        let value: EmbeddedField<P> = self.value.into();
+        let value: EmbeddedField = self.value.into();
         let value = AllocatedNonNativeFieldVar::new_witness(ns!(cs, "value"), || Ok(value))?;
         let r = RandomnessVar::new_witness(ns!(cs, "r"), || Ok(self.r))?;
         let rc = NonNativeFieldVar::new_witness(ns!(cs, "rc"), || Ok(self.rc))?;
 
-        let params = P::HashGadget::allocate(ns!(cs, "poseidon-parameters"))?;
-        let pk = ZSwap::<P>::derive_public_key_gadget(&params, &sk)?;
+        let params = DpHashGadget::allocate(ns!(cs, "poseidon-parameters"))?;
+        let pk = ZSwap::derive_public_key_gadget(&params, &sk)?;
         let attribs = AttributesVar { type_, value };
-        let note = ZSwap::<P>::gen_gadget(&params, &pk, &attribs, &r)?;
+        let note = ZSwap::gen_gadget(&params, &pk, &attribs, &r)?;
 
         let root2 = path.calculate_root(&params, &params, &[note][..])?;
         st.enforce_equal(&root2)?;
 
-        // let com2 = P::HomomorphicCommitmentGadget::verify(type_, type_wit,
+        // let com2 = DpHomomorphicCommitmentGadget::verify(type_, type_wit,
 
         unimplemented!()
     }
 }
 
-struct LangOutput<P: ZSwapParameters>(PhantomData<P>);
+struct LangOutput();
 
-impl<P: ZSwapParameters> LangOutput<P> {
+impl LangOutput {
     fn new() -> Self {
         unimplemented!()
     }
 }
 
-impl<P: ZSwapParameters> ConstraintSynthesizer<P::F> for LangOutput<P> {
-    fn generate_constraints(self, cs: ConstraintSystemRef<P::F>) -> r1cs::Result<()> {
+impl ConstraintSynthesizer<DpF> for LangOutput {
+    fn generate_constraints(self, cs: ConstraintSystemRef<DpF>) -> r1cs::Result<()> {
         unimplemented!()
     }
 }
 
 #[allow(type_alias_bounds)]
-type Proof<P: ZSwapParameters> = <P::SNARK as SNARK<P::F>>::Proof;
+type Proof = <DpSNARK as SNARK<DpF>>::Proof;
 #[allow(type_alias_bounds)]
-type HomomorphicCommitment<P: ZSwapParameters> =
-    <P::HomomorphicCommitment as HomomorphicCommitmentScheme<
-        P::F,
-        EmbeddedField<P>,
-        EmbeddedField<P>,
-    >>::Commitment;
+type HomomorphicCommitment =
+    <DpHomomorphicCommitment as HomomorphicCommitmentScheme<
+        DpF,
+        EmbeddedField,
+        EmbeddedField,
+        >>::Commitment;
 
-pub struct ZSwapSignature<P: ZSwapParameters> {
+// wrappers to implement missing traits?
+//struct ProofW(<DpSNARK as SNARK<DpF>>::Proof); // try wrapping?
+//struct HomomorphicCommitmentW(GroupAffine<DpG>);
+
+
+pub struct ZSwapSignature {
     pub input_signatures: HashSet<(
-        Proof<P>,
-        HomomorphicCommitment<P>,
-        <ZSwap<P> as OneTimeAccount>::Nullifier,
+        Proof,
+        HomomorphicCommitment,
+        <ZSwap as OneTimeAccount>::Nullifier,
     )>,
     pub output_signatures: HashSet<(
-        Proof<P>,
-        HomomorphicCommitment<P>,
+        Proof,
+        HomomorphicCommitment,
         (
-            <ZSwap<P> as OneTimeAccount>::Note,
-            <ZSwap<P> as OneTimeAccount>::Ciphertext,
+            <ZSwap as OneTimeAccount>::Note,
+            <ZSwap as OneTimeAccount>::Ciphertext,
         ),
     )>,
-    pub randomness: EmbeddedField<P>,
+    pub randomness: EmbeddedField,
 }
 
-impl<P: ZSwapParameters> ZSwapScheme for ZSwap<P>
-where
-    EmbeddedField<P>: Hash,
-    HomomorphicCommitment<P>: Hash + Clone,
-    Proof<P>: Eq + Hash,
+//impl Hash for Proof { }
+//impl Eq for Proof { }
+
+impl ZSwapScheme for ZSwap
+//where
+//    EmbeddedField: Hash,
+//    HomomorphicCommitment: Hash + Clone,
+//    Proof: Eq + Hash,
 {
-    type PublicParameters = ZSwapPublicParams<P>;
-    type Signature = ZSwapSignature<P>;
-    type State = ZSwapState<P>;
-    type StateWitness = Path<MerkleTreeConfig<P>>;
-    type Error = <P::SNARK as SNARK<P::F>>::Error;
+    type PublicParameters = ZSwapPublicParams;
+    type Signature = ZSwapSignature;
+    type State = ZSwapState;
+    type StateWitness = Path<MerkleTreeConfig>;
+    type Error = <DpSNARK as SNARK<DpF>>::Error;
 
     fn setup<R: Rng + CryptoRng>(rng: &mut R) -> Result<Self::PublicParameters, Self::Error> {
-        let (spend_proving_key, spend_verifying_key) = P::SNARK::setup(LangSpend::<P>::new(), rng)?;
+        let (spend_proving_key, spend_verifying_key) = DpSNARK::setup(LangSpend::new(), rng)?;
         let (output_proving_key, output_verifying_key) =
-            P::SNARK::setup(LangOutput::<P>::new(), rng)?;
+            DpSNARK::setup(LangOutput::new(), rng)?;
         Ok(ZSwapPublicParams {
             spend_proving_key,
             spend_verifying_key,
@@ -583,29 +570,67 @@ where
         rng: &mut R,
     ) -> Result<Self::Signature, Self::Error> {
 
-        let rc_s: Vec<EmbeddedField<P>> =
+        let rc_s: Vec<EmbeddedField> =
             (0..inputs.len()).map(|_| UniformRand::rand(rng)).collect();
-        let com_s: Vec<_> =
-            inputs.iter().zip(rc_s.iter())
-            .map(|(input,rc)|
-              <MultiBasePedersen<P::G,P::Hash> as
-               HomomorphicCommitmentScheme<_,_,_>>::
-                 commit(&From::from(input.4.type_),
-                        &From::from(input.4.value),
-                        &rc))
-            .collect();
 
-        let rc_t: Vec<EmbeddedField<P>> =
-            (0..inputs.len()).map(|_| UniformRand::rand(rng)).collect();
-        let com_t: Vec<_> =
-            outputs.iter().zip(rc_t.iter())
-            .map(|(output,rc)|
-              <MultiBasePedersen<P::G,P::Hash> as
-               HomomorphicCommitmentScheme<_,_,_>>::
-                 commit(&From::from(output.2.type_),
-                        &From::from(output.2.value),
-                        &rc))
-            .collect();
+        //let com: GroupAffine<DpG> =
+        //    <MultiBasePedersen<DpG,DpHash> as
+        //       HomomorphicCommitmentScheme<_,_,_>>::
+        //         commit(&From::from(inputs[0].4.type_),
+        //                &From::from(inputs[0].4.value),
+        //                &rc_s[0]).0;
+
+//        let t: &DpF = &From::from(inputs[0].4.type_);
+//        let v: &EmbeddedField = &From::from(inputs[0].4.value);
+//        let r: &EmbeddedField = &rc_s[0];
+//        let com:
+//            (<<P as ZSwapParameters>::HomomorphicCommitment as HomomorphicCommitmentScheme<
+//                <P as ZSwapParameters>::F,
+//                <DpG as ModelParameters>::ScalarField,
+//                <DpG as ModelParameters>::ScalarField,
+//                >>::Commitment,
+//             <<P as ZSwapParameters>::HomomorphicCommitment as HomomorphicCommitmentScheme<
+//                <P as ZSwapParameters>::F,
+//                <DpG as ModelParameters>::ScalarField,
+//                <DpG as ModelParameters>::ScalarField,
+//            >>::TypeWitness
+//            ) =
+//            HomomorphicCommitmentScheme::<DpF,EmbeddedField,EmbeddedField>::
+//                 commit(t, v, r);
+
+//        let com:
+//         (<DpHomomorphicCommitment as
+//               HomomorphicCommitmentScheme<DpF,EmbeddedField,EmbeddedField>
+//          >::Commitment,
+//         <DpHomomorphicCommitment as
+//               HomomorphicCommitmentScheme<DpF,EmbeddedField,EmbeddedField>
+//          >::TypeWitness) =
+//            HomomorphicCommitmentScheme::<DpF,EmbeddedField,EmbeddedField>::
+//                 commit(t, v, &rc_s[0]);
+
+
+
+//        let com_s: Vec<_> =
+//            inputs.iter().zip(rc_s.iter())
+//            .map(|(input,rc)|
+//              <MultiBasePedersen<DpG,DpHash> as
+//               HomomorphicCommitmentScheme<_,_,_>>::
+//                 commit(&From::from(input.4.type_),
+//                        &From::from(input.4.value),
+//                        &rc).0)
+//            .collect();
+
+//        let rc_t: Vec<EmbeddedField> =
+//            (0..inputs.len()).map(|_| UniformRand::rand(rng)).collect();
+//        let com_t: Vec<HomomorphicCommitment> =
+//            outputs.iter().zip(rc_t.iter())
+//            .map(|(output,rc)|
+//              <MultiBasePedersen<DpG,DpHash> as
+//               HomomorphicCommitmentScheme<_,_,_>>::
+//                 commit(&From::from(output.2.type_),
+//                        &From::from(output.2.value),
+//                        &rc).0)
+//            .collect();
 
         unimplemented!()
     }
@@ -617,6 +642,34 @@ where
         signature: &Self::Signature,
         rng: &mut R,
     ) -> Result<bool, Self::Error> {
+
+        let com_one: HomomorphicCommitment = Zero::zero();
+        let input_minus_output: HomomorphicCommitment =
+            signature.input_signatures.iter()
+            .map(|(_,com,_)| com.clone()).chain(
+                signature.output_signatures.iter()
+                .map(|(_,com,_)| -com.clone()))
+            .fold(com_one,|x,y| x + y);
+
+//        let com_rc: HomomorphicCommitment =
+//              <MultiBasePedersen<DpG,DpHash> as
+//               HomomorphicCommitmentScheme::<_,_,_>>::
+//                 commit(&<DpF as Zero>::zero(),
+//                        &<EmbeddedField as Zero>::zero(),
+//                        &signature.randomness).0;
+//
+
+//            outputs.iter().zip(rc_t.iter())
+//            .map(|(output,rc)|
+//              <MultiBasePedersen<DpG,DpHash> as
+//               HomomorphicCommitmentScheme<_,_,_>>::
+//                 commit(&From::from(output.2.type_),
+//                        &From::from(output.2.value),
+//                        &rc).0)
+//            .collect();
+
+//        let com_sum = input_minus_output - com_rc;
+
         unimplemented!()
     }
 
@@ -638,18 +691,23 @@ where
         signatures: &[Self::Signature],
         rng: &mut R,
     ) -> Result<Self::Signature, Self::Error> {
-        let mut input_signatures = HashSet::new();
-        let mut output_signatures = HashSet::new();
-        let mut randomness = EmbeddedField::<P>::zero();
-        for sig in signatures {
-            input_signatures.extend(sig.input_signatures.iter().cloned());
-            output_signatures.extend(sig.output_signatures.iter().cloned());
-            randomness += sig.randomness;
-        }
-        Ok(ZSwapSignature {
-            input_signatures,
-            output_signatures,
-            randomness,
-        })
+        unimplemented!()
+
+        // The issue with the code below is that signature elements don't
+        // implement Eq/Hash/Clone, so we need wrappers probably.
+
+//        let mut input_signatures = HashSet::new();
+//        let mut output_signatures = HashSet::new();
+//        let mut randomness = EmbeddedField::zero();
+//        for sig in signatures {
+//            input_signatures.extend(sig.input_signatures.iter().cloned());
+//            output_signatures.extend(sig.output_signatures.iter().cloned());
+//            randomness += sig.randomness;
+//        }
+//        Ok(ZSwapSignature {
+//            input_signatures,
+//            output_signatures,
+//            randomness,
+//        })
     }
 }

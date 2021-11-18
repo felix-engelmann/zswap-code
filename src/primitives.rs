@@ -4,6 +4,7 @@ use ark_crypto_primitives::merkle_tree;
 use ark_ec::models::twisted_edwards_extended::GroupAffine;
 use ark_ec::models::TEModelParameters;
 use ark_ff::fields::{Field, PrimeField};
+use ark_ff::{Zero};
 use ark_nonnative_field::NonNativeFieldVar;
 use ark_r1cs_std::alloc::{AllocVar, AllocationMode};
 use ark_r1cs_std::eq::EqGadget;
@@ -100,13 +101,16 @@ where
     }
 }
 
+
+// Zero implies Add
+
 pub trait HomomorphicCommitmentScheme<T, V, R>
 where
-    V: Eq + Add<Output = V> + Sub<Output = V> + Neg<Output = V>,
-    R: Eq + Add<Output = R> + Sub<Output = R> + Neg<Output = R>,
+    V: Eq + Zero<Output = V> + Sub<Output = V> + Neg<Output = V>,
+    R: Eq + Zero<Output = R> + Sub<Output = R> + Neg<Output = R>,
 {
     type Commitment: Eq
-        + Add<Output = Self::Commitment>
+        + Zero<Output = Self::Commitment>
         + Sub<Output = Self::Commitment>
         + Neg<Output = Self::Commitment>;
     type TypeWitness;
