@@ -28,6 +28,13 @@ use std::io::{self, Cursor, Read, Write};
 use std::marker::PhantomData;
 
 
+
+////////////////////////////////////////////////////////////////////////////////
+// Type aliases
+////////////////////////////////////////////////////////////////////////////////
+
+
+// Dp stands for "Default parameters", but this prefix could be renamed.
 type DpF = ::ark_bls12_381::Fr;
 type DpG = ::ark_ed_on_bls12_381::EdwardsParameters;
 type DpHash = crate::poseidon::Poseidon;
@@ -43,24 +50,32 @@ type DpSNARK =
     ::ark_groth16::Groth16<::ark_ec::models::bls12::Bls12<::ark_bls12_381::Parameters>>;
 
 
-#[allow(type_alias_bounds)]
-pub type EmbeddedField = <DpG as ModelParameters>::ScalarField;
-#[allow(type_alias_bounds)]
-pub type MerkleTreeConfig = <DpMerkleTree as MerkleTreeParams<
-    DpF,
-    <DpHash as CompressionFunction<DpF>>::CRHScheme,
-    <DpHash as CompressionFunction<DpF>>::TwoToOneCRHScheme,
->>::Config;
 
+pub type EmbeddedField = <DpG as ModelParameters>::ScalarField;
+pub type MerkleTreeConfig =
+    <DpMerkleTree as MerkleTreeParams<
+            DpF,
+            <DpHash as CompressionFunction<DpF>>::CRHScheme,
+            <DpHash as CompressionFunction<DpF>>::TwoToOneCRHScheme>>::Config;
 type DpHomCom =
     <DpHomComScheme as
      HomComScheme<DpF,EmbeddedField,EmbeddedField>>::Com;
+type Proof = <DpSNARK as SNARK<DpF>>::Proof;
+type HomCom = <DpHomComScheme as
+               HomComScheme<DpF,EmbeddedField,EmbeddedField,>>::Com;
+
+
+
+////////////////////////////////////////////////////////////////////////////////
+// Merkle Tree
+////////////////////////////////////////////////////////////////////////////////
+
 
 struct MerkleTreeConfigGadget();
 
+// @volhovm: where to put these?
 const OPTIMIZATION_GOAL: OptimizationGoal = OptimizationGoal::Constraints;
 const OPTIMIZATION_TYPE: OptimizationType = OptimizationType::Constraints;
-
 
 impl merkle_tree::constraints::ConfigGadget<MerkleTreeConfig, DpF>
     for MerkleTreeConfigGadget
@@ -100,7 +115,7 @@ impl ZSwap {
 ////////////////////////////////////////////////////////////////////////////////
 
 
-#[derive(Default)]
+#[derive(Default,Clone)]
 pub struct Randomness<F> {
     pub rk: F,
     pub rc: F,
@@ -178,6 +193,8 @@ impl FromBytes for Attributes {
 }
 
 impl OneTimeAccount for ZSwap {
+    // @volhovm: I assume the first element is the "nullifier" sk, and the second one
+    // is used for asymmetric encryption?
     type SecretKey = (DpF, <DpEncrypt as EncryptionScheme>::SecretKey);
     type PublicKey = (DpF, <DpEncrypt as EncryptionScheme>::PublicKey);
     type PartialPublicKey = DpF;
@@ -481,7 +498,18 @@ impl ConstraintSynthesizer<DpF> for LangSpend {
     }
 }
 
-struct LangOutput();
+struct LangOutput {
+    // Public inputs
+    pk: DpF,
+    note: DpF,
+    com: GroupAffine<DpG>,
+
+    // Witnesses
+    type_: DpF,
+    value: EmbeddedField,
+    r: <ZSwap as OneTimeAccount>::Randomness,
+    rc: EmbeddedField
+}
 
 impl LangOutput {
     fn new() -> Self {
@@ -495,15 +523,6 @@ impl ConstraintSynthesizer<DpF> for LangOutput {
     }
 }
 
-#[allow(type_alias_bounds)]
-type Proof = <DpSNARK as SNARK<DpF>>::Proof;
-#[allow(type_alias_bounds)]
-type HomCom =
-    <DpHomComScheme as HomComScheme<
-        DpF,
-        EmbeddedField,
-        EmbeddedField,
-        >>::Com;
 
 // wrappers to implement missing traits?
 //struct ProofW(<DpSNARK as SNARK<DpF>>::Proof); // try wrapping?
@@ -527,8 +546,10 @@ pub struct ZSwapSignature {
     pub randomness: EmbeddedField,
 }
 
-//impl Hash for Proof { }
-//impl Eq for Proof { }
+pub enum ZSwapError {
+    ZSwapErrorStr(&'static str),
+    ZSwapErrorCircuit(<DpSNARK as SNARK<DpF>>::Error)
+}
 
 impl ZSwapScheme for ZSwap
 //where
@@ -540,12 +561,15 @@ impl ZSwapScheme for ZSwap
     type Signature = ZSwapSignature;
     type State = ZSwapState;
     type StateWitness = Path<MerkleTreeConfig>;
-    type Error = <DpSNARK as SNARK<DpF>>::Error;
+    type Error = ZSwapError;
 
     fn setup<R: Rng + CryptoRng>(rng: &mut R) -> Result<Self::PublicParameters, Self::Error> {
-        let (spend_proving_key, spend_verifying_key) = DpSNARK::setup(LangSpend::new(), rng)?;
+        let (spend_proving_key, spend_verifying_key) =
+            DpSNARK::setup(LangSpend::new(), rng)
+            .map_err(ZSwapError::ZSwapErrorCircuit)?;
         let (output_proving_key, output_verifying_key) =
-            DpSNARK::setup(LangOutput::new(), rng)?;
+            DpSNARK::setup(LangOutput::new(), rng)
+            .map_err(ZSwapError::ZSwapErrorCircuit)?;
         Ok(ZSwapPublicParams {
             spend_proving_key,
             spend_verifying_key,
@@ -554,7 +578,7 @@ impl ZSwapScheme for ZSwap
         })
     }
 
-    fn sign_tx<R: Rng + CryptoRng + ?Sized>(
+    fn sign_tx<R: Rng + CryptoRng + Sized>(
         params: &Self::PublicParameters,
         inputs: &[(
             Self::SecretKey,
@@ -598,7 +622,104 @@ impl ZSwapScheme for ZSwap
                         &rc).0)
             .collect();
 
-        unimplemented!()
+
+        let mut proofs_s: Vec<Proof> = Vec::new();
+        for i in 0..inputs.len() {
+            // part of params
+            let st: DpF = state.roots.last().ok_or(ZSwapError::ZSwapErrorStr("bla"))?.clone();
+            let circuit = LangSpend {
+                // Public inputs
+                st: st,
+                nul: inputs[i].2,
+                com: com_s[i],
+
+                // Witnesses
+                path: inputs[i].3.clone(),
+                sk: inputs[i].0.0,
+                // @volhovm: I'm a bit worried about these conversions.
+                // Is input field smaller than the output one? i.e. is `from` injective?
+                type_: From::from(inputs[i].4.type_),
+                value: From::from(inputs[i].4.value),
+                r: inputs[i].5.clone(),
+                rc: rc_s[i]
+            };
+            let proof =
+                <DpSNARK as SNARK<DpF>>::prove(&params.spend_proving_key,
+                                                       circuit,
+                                                       rng)
+                .map_err(ZSwapError::ZSwapErrorCircuit)?;
+            proofs_s.push(proof);
+        }
+
+        let mut proofs_s: Vec<Proof> = Vec::new();
+        for i in 0..inputs.len() {
+            // part of params
+            let st: DpF = state.roots.last().ok_or(ZSwapError::ZSwapErrorStr("bla"))?.clone();
+            let circuit = LangSpend {
+                // Public inputs
+                st: st,
+                nul: inputs[i].2,
+                com: com_s[i],
+
+                // Witnesses
+                path: inputs[i].3.clone(),
+                sk: inputs[i].0.0,
+                // @volhovm: I'm a bit worried about these conversions.
+                // Is input field smaller than the output one? i.e. is `from` injective?
+                type_: From::from(inputs[i].4.type_),
+                value: From::from(inputs[i].4.value),
+                r: inputs[i].5.clone(),
+                rc: rc_s[i]
+            };
+            let proof =
+                <DpSNARK as SNARK<DpF>>::prove(&params.spend_proving_key,circuit,rng)
+                .map_err(ZSwapError::ZSwapErrorCircuit)?;
+            proofs_s.push(proof);
+        }
+
+
+        let mut proofs_t: Vec<Proof> = Vec::new();
+        for i in 0..outputs.len() {
+            let circuit = LangOutput {
+                // Public inputs
+                pk: outputs[i].0.0,
+                note: outputs[i].1,
+                com: com_t[i],
+
+                // Witnesses
+                type_: From::from(outputs[i].2.type_),
+                value: From::from(outputs[i].2.value),
+                r: outputs[i].3.clone(),
+                rc: rc_t[i]
+            };
+            let proof =
+                <DpSNARK as SNARK<DpF>>::prove(&params.spend_proving_key,circuit,rng)
+                .map_err(ZSwapError::ZSwapErrorCircuit)?;
+            proofs_t.push(proof);
+        }
+
+
+        let mut input_signatures: HashSet<(
+            Proof,
+            DpHomCom,
+            Self::Nullifier)> = HashSet::new();
+        for i in 0..outputs.len() {
+            // The thing must satisfy Eq,Hash but it doesn't
+            // input_signatures.insert((proofs_s[i],com_s[i],inputs[i].2));
+        }
+        let output_signatures: HashSet<(
+            Proof,
+            DpHomCom,
+            (Self::Note,
+             Self::Ciphertext))> = HashSet::new();
+        let randomness: EmbeddedField =
+            rc_s.iter().fold(From::from(0),|x:EmbeddedField,y| x + y) -
+            rc_t.iter().fold(From::from(0),|x:EmbeddedField,y| x + y);
+
+        Ok(ZSwapSignature {
+            input_signatures,
+            output_signatures,
+            randomness })
     }
 
     fn verify_tx<R: Rng + CryptoRng + ?Sized>(

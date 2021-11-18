@@ -11,7 +11,7 @@ pub trait ZSwapScheme: OneTimeAccount {
 
     fn setup<R: Rng + CryptoRng>(rng: &mut R) -> Result<Self::PublicParameters, Self::Error>;
 
-    fn sign_tx<R: Rng + CryptoRng + ?Sized>(
+    fn sign_tx<R: Rng + CryptoRng + Sized>(
         params: &Self::PublicParameters,
         inputs: &[(
             Self::SecretKey,
