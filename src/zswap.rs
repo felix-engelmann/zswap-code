@@ -24,6 +24,7 @@ pub trait ZSwapScheme: OneTimeAccount {
         outputs: &[(
             Self::PublicKey,
             Self::Note,
+            Self::Ciphertext,
             Self::Attributes,
             Self::Randomness,
         )],

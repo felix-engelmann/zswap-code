@@ -155,6 +155,7 @@ impl<F: UniformRand> UniformRand for Randomness<F> {
 // Attributes
 ////////////////////////////////////////////////////////////////////////////////
 
+#[derive(Clone)]
 pub struct Attributes {
     pub value: u64,
     pub type_: u64,
@@ -584,6 +585,7 @@ fn estimate_constraints<C: ConstraintSynthesizer<DpF>>(c: C) -> r1cs::Result<usi
     Ok(cs.num_constraints())
 }
 
+#[derive(PartialEq, Eq, Clone)]
 pub struct ZSwapSignature {
     pub input_signatures: HashSet<(Proof, HomCom, <ZSwap as OneTimeAccount>::Nullifier)>,
     pub output_signatures: HashSet<(
@@ -609,12 +611,7 @@ impl From<SynthesisError> for ZSwapError {
     }
 }
 
-impl ZSwapScheme for ZSwap
-//where
-//    EmbeddedField: Hash,
-//    HomCom: Hash + Clone,
-//    Proof: Eq + Hash,
-{
+impl ZSwapScheme for ZSwap {
     type PublicParameters = ZSwapPublicParams;
     type Signature = ZSwapSignature;
     type State = ZSwapState;
@@ -650,6 +647,7 @@ impl ZSwapScheme for ZSwap
         outputs: &[(
             Self::PublicKey,
             Self::Note,
+            Self::Ciphertext,
             Self::Attributes,
             Self::Randomness,
         )],
@@ -676,8 +674,8 @@ impl ZSwapScheme for ZSwap
             .zip(rc_t.iter())
             .map(|(output, rc)| {
                 <DpHomComScheme as HomComScheme<_, _, _>>::commit(
-                    &From::from(output.2.type_),
-                    &From::from(output.2.value),
+                    &From::from(output.3.type_),
+                    &From::from(output.3.value),
                     &rc,
                 )
                 .0
@@ -741,9 +739,9 @@ impl ZSwapScheme for ZSwap
                 com: com_t[i],
 
                 // Witnesses
-                type_: From::from(outputs[i].2.type_),
-                value: From::from(outputs[i].2.value),
-                r: outputs[i].3.clone(),
+                type_: From::from(outputs[i].3.type_),
+                value: From::from(outputs[i].3.value),
+                r: outputs[i].4.clone(),
                 rc: rc_t[i],
             };
             let proof = <DpSNARK as SNARK<DpF>>::prove(&params.spend_proving_key, circuit, rng)?;
@@ -782,13 +780,8 @@ impl ZSwapScheme for ZSwap
         let input_minus_output: HomCom = signature
             .input_signatures
             .iter()
-            .map(|(_, com, _)| com.clone())
-            .chain(
-                signature
-                    .output_signatures
-                    .iter()
-                    .map(|(_, com, _)| -com.clone()),
-            )
+            .map(|sig| sig.1.clone())
+            .chain(signature.output_signatures.iter().map(|sig| -sig.1.clone()))
             .fold(com_one, |x, y| x + y);
 
         let com_rc: HomCom = <DpHomComScheme as HomComScheme<_, _, _>>::commit(
@@ -812,6 +805,12 @@ impl ZSwapScheme for ZSwap
             .fold(com_one, |x, y| x + y);
 
         let coms_check = input_minus_output - com_rc - deltas_coms == com_one;
+
+        for sig in signature.input_signatures.iter() {
+            let instance: &[DpF] = unimplemented!();
+            let res =
+                <DpSNARK as SNARK<DpF>>::verify(&params.spend_verifying_key, instance, &sig.0 .0)?;
+        }
 
         return Ok(coms_check);
     }
