@@ -11,5 +11,6 @@ pub mod sparse_merkle_tree;
 pub mod zswap;
 
 pub use ota::OneTimeAccount;
-pub use protocol::ZSwap;
-pub use zswap::ZSwapScheme;
+pub use protocol::{Attributes, ZSwap, ZSwapState};
+pub use zswap::{Transaction, ZSwapScheme};
+pub type Fr = ::ark_bls12_381::Fr;

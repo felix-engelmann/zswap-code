@@ -513,7 +513,14 @@ impl ConstraintSynthesizer<DpF> for LangSpend {
         st.enforce_equal(&root2)?;
 
         // Commit check
-        DpHomComSchemeGadget::verify(&attribs.type_, &type_wit, &attribs.value.into(), &rc, &com)?;
+        DpHomComSchemeGadget::verify(
+            &params,
+            &attribs.type_,
+            &type_wit,
+            &attribs.value.into(),
+            &rc,
+            &com,
+        )?;
 
         Ok(())
     }
@@ -576,7 +583,14 @@ impl ConstraintSynthesizer<DpF> for LangOutput {
         note.enforce_equal(&note2)?;
 
         // Commit check
-        DpHomComSchemeGadget::verify(&attribs.type_, &type_wit, &attribs.value.into(), &rc, &com)?;
+        DpHomComSchemeGadget::verify(
+            &params,
+            &attribs.type_,
+            &type_wit,
+            &attribs.value.into(),
+            &rc,
+            &com,
+        )?;
 
         Ok(())
     }
@@ -824,19 +838,26 @@ impl ZSwapScheme for ZSwap {
             .fold(com_one, |x, y| x + y);
 
         let coms_check = input_minus_output - com_rc - deltas_coms == com_one;
+        debug!("coms_check: {}", coms_check);
 
         for (proof, com, nul, rt) in signature.input_signatures.iter() {
             let instance: &[DpF] = &[*rt, *nul, com.x, com.y];
+            debug!("spend snark verify");
             if !DpSNARK::verify(&params.spend_verifying_key, instance, &proof.0)? {
+                debug!("failed");
                 return Ok(false);
             };
+            debug!("pass");
         }
         for (proof, com, (note, ciphertext)) in signature.output_signatures.iter() {
             let encoded = ciphertext_to_field(&ciphertext[..]);
             let instance: &[DpF] = &[*note, com.x, com.y, encoded];
+            debug!("output snark verify");
             if !DpSNARK::verify(&params.output_verifying_key, instance, &proof.0)? {
+                debug!("failed");
                 return Ok(false);
             };
+            debug!("pass");
         }
 
         return Ok(coms_check);
@@ -846,13 +867,19 @@ impl ZSwapScheme for ZSwap {
         state.nullifiers.insert(*input);
     }
 
-    fn apply_output(state: &mut Self::State, output: &Self::Note) {
+    fn apply_output(state: &mut Self::State, output: &Self::Note) -> Self::StateWitness {
         state.notes.insert(*output);
         state
             .merkle_tree
             .update(state.merkle_tree_next_index, &[*output][..])
             .expect("insertion must succeed");
-        state.roots.push(state.merkle_tree.root())
+        let path = state
+            .merkle_tree
+            .generate_proof(state.merkle_tree_next_index)
+            .expect("just inserted node should have a path");
+        state.merkle_tree_next_index += 1;
+        state.roots.push(state.merkle_tree.root());
+        path
     }
 
     fn merge<R: Rng + CryptoRng + ?Sized>(

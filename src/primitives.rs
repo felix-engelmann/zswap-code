@@ -3,13 +3,17 @@ use ark_crypto_primitives::crh::{CRHScheme, TwoToOneCRHScheme};
 use ark_crypto_primitives::merkle_tree;
 use ark_ec::models::twisted_edwards_extended::GroupAffine;
 use ark_ec::models::TEModelParameters;
+use ark_ec::{AffineCurve, ProjectiveCurve};
 use ark_ff::fields::{Field, PrimeField};
-use ark_ff::Zero;
+use ark_ff::{One, Zero};
 use ark_nonnative_field::NonNativeFieldVar;
 use ark_r1cs_std::alloc::{AllocVar, AllocationMode};
+use ark_r1cs_std::bits::ToBitsGadget;
 use ark_r1cs_std::eq::EqGadget;
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_r1cs_std::groups::curves::twisted_edwards::AffineVar;
+use ark_r1cs_std::groups::CurveVar;
+use ark_r1cs_std::R1CSVar;
 use ark_relations::ns;
 use ark_relations::r1cs::{Namespace, SynthesisError};
 #[cfg(test)]
@@ -125,6 +129,7 @@ where
     type TypeWitnessVar;
 
     fn verify(
+        params: &Self::ParametersVar,
         type_: &T,
         wit: &Self::TypeWitnessVar,
         v: &V,
@@ -137,34 +142,67 @@ pub struct MultiBasePedersen<P: TEModelParameters, H>(pub PhantomData<(P, H)>)
 where
     P::BaseField: PrimeField;
 
+impl<P: TEModelParameters, H: CompressionFunction<P::BaseField>> MultiBasePedersen<P, H>
+where
+    P::BaseField: PrimeField,
+{
+    fn hash_to_curve(type_: &P::BaseField) -> (GroupAffine<P>, P::BaseField) {
+        // Our hash-to-curve is:
+        // find the smallest `ctr: P::BaseField`, s.t. exists y: P::ScalarField, where
+        //  (x = compress(type, ctr), y) in G
+        // It is witnessed by `(ctr, y)`
+        let mut ctr: P::BaseField = P::BaseField::zero();
+        let h = loop {
+            let x = H::compress(type_, &ctr);
+            if let Some(h) = GroupAffine::<P>::get_point_from_x(x, true) {
+                if h.is_in_correct_subgroup_assuming_on_curve() {
+                    break h;
+                }
+            }
+            ctr += P::BaseField::one();
+        };
+        (h, ctr)
+    }
+}
+
 // Basic idea: Our type `type_: P::BaseField` is combined with a counter `ctr: P::BaseField` using
 // a two-to-one hash. The result should be in `x: P::ScalarField` (conversion check needed). Find
 // `y: P::ScalarField` such that `(x, y)` is a valid curve point. `(ctr, y)` are witnesses to
 // `type_`.
-#[allow(unused_variables)]
 impl<P: TEModelParameters, H: CompressionFunction<P::BaseField>>
     HomComScheme<P::BaseField, P::ScalarField, P::ScalarField> for MultiBasePedersen<P, H>
 where
     P::BaseField: PrimeField,
 {
     type Com = GroupAffine<P>;
-    type TypeWitness = (P::BaseField, P::ScalarField);
+    type TypeWitness = (P::BaseField, P::BaseField);
 
     fn commit(
         type_: &P::BaseField,
         v: &P::ScalarField,
         r: &P::ScalarField,
     ) -> (Self::Com, Self::TypeWitness) {
-        unimplemented!()
+        // What we want: Given a hash-to-curve H:
+        // Commit(type, v, r) = g^r H(type)^v
+        let (h, ctr) = Self::hash_to_curve(type_);
+        let g = GroupAffine::<P>::prime_subgroup_generator();
+        let com = g.mul(*r) + h.mul(*v);
+        (com.into_affine(), (ctr, h.y))
     }
 
     fn verify(
         type_: &P::BaseField,
-        wit: &Self::TypeWitness,
+        (ctr, y): &Self::TypeWitness,
         v: &P::ScalarField,
         r: &P::ScalarField,
     ) -> Option<Self::Com> {
-        unimplemented!()
+        let (h, ctr2) = Self::hash_to_curve(type_);
+        if *ctr != ctr2 || h.y != *y {
+            None
+        } else {
+            let g = GroupAffine::<P>::prime_subgroup_generator();
+            Some((g.mul(*r) + h.mul(*v)).into_affine())
+        }
     }
 }
 
@@ -197,15 +235,15 @@ where
     P::BaseField: PrimeField,
 {
     pub rejection_sampler: FpVar<P::BaseField>,
-    pub curve_y: NonNativeFieldVar<P::ScalarField, P::BaseField>,
+    pub curve_y: FpVar<P::BaseField>,
 }
 
-impl<P: TEModelParameters> AllocVar<(P::BaseField, P::ScalarField), P::BaseField>
+impl<P: TEModelParameters> AllocVar<(P::BaseField, P::BaseField), P::BaseField>
     for MultiBasePedersenTypeWitness<P>
 where
     P::BaseField: PrimeField,
 {
-    fn new_variable<U: Borrow<(P::BaseField, P::ScalarField)>>(
+    fn new_variable<U: Borrow<(P::BaseField, P::BaseField)>>(
         cs: impl Into<Namespace<P::BaseField>>,
         f: impl FnOnce() -> Result<U, SynthesisError>,
         mode: AllocationMode,
@@ -219,7 +257,7 @@ where
                     || Ok(r),
                     mode,
                 )?,
-                curve_y: NonNativeFieldVar::new_variable(ns!(cs, "curve_y"), || Ok(y), mode)?,
+                curve_y: FpVar::new_variable(ns!(cs, "curve_y"), || Ok(y), mode)?,
             })
         })
     }
@@ -244,13 +282,27 @@ where
     type TypeWitnessVar = MultiBasePedersenTypeWitness<P>;
 
     fn verify(
+        params: &Self::ParametersVar,
         type_: &FpVar<P::BaseField>,
         wit: &Self::TypeWitnessVar,
         v: &NonNativeFieldVar<P::ScalarField, P::BaseField>,
         r: &NonNativeFieldVar<P::ScalarField, P::BaseField>,
         com: &Self::ComVar,
     ) -> Result<(), SynthesisError> {
-        unimplemented!()
+        let x = HGadget::compress(params, type_, &wit.rejection_sampler)?;
+        // FIXME: h isn't being curve/prime-order checked!
+        let h = AffineVar::<P, FpVar<P::BaseField>>::new(x, wit.curve_y.clone());
+        let g = AffineVar::<P, FpVar<P::BaseField>>::new_constant(
+            ns!(h.cs(), "g"),
+            GroupAffine::<P>::prime_subgroup_generator(),
+        )?;
+
+        let value_comm = h.scalar_mul_le(v.to_bits_le()?.iter())?;
+        // This could be more efficient: We don't need to compute the powers of g, we could provide
+        // them all as precomputed constants.
+        let randomness_term = g.scalar_mul_le(r.to_bits_le()?.iter())?;
+        (value_comm + randomness_term).enforce_equal(com)?;
+        Ok(())
     }
 }
 

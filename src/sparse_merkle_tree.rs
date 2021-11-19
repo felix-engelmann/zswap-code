@@ -220,10 +220,12 @@ impl<P: Config> SparseMerkleTree<P> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::poseidon::Poseidon;
     use crate::primitives::MerkleTreeParams;
     use ark_bls12_381::Fr;
+    use ark_crypto_primitives::crh::poseidon::{TwoToOneCRH, CRH};
 
-    type Params = <crate::poseidon::Poseidon as MerkleTreeParams<Fr>>::Config;
+    type Params = <Poseidon as MerkleTreeParams<Fr, CRH<Fr>, TwoToOneCRH<Fr>>>::Config;
     #[test]
     fn test_membership() {
         let mut tree = SparseMerkleTree::<Params>::blank(

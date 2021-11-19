@@ -42,7 +42,7 @@ pub trait ZSwapScheme: OneTimeAccount {
 
     fn apply_input(state: &mut Self::State, input: &Self::Nullifier);
 
-    fn apply_output(state: &mut Self::State, output: &Self::Note);
+    fn apply_output(state: &mut Self::State, output: &Self::Note) -> Self::StateWitness;
 
     fn merge<R: Rng + CryptoRng + ?Sized>(
         params: &Self::PublicParameters,
@@ -50,13 +50,18 @@ pub trait ZSwapScheme: OneTimeAccount {
         rng: &mut R,
     ) -> Result<Self::Signature, Self::Error>;
 
-    fn apply_tx(state: &mut Self::State, transaction: &Transaction<Self>) {
+    fn apply_tx(
+        state: &mut Self::State,
+        transaction: &Transaction<Self>,
+    ) -> Vec<Self::StateWitness> {
         for input in transaction.inputs.iter() {
             Self::apply_input(state, input);
         }
+        let mut out = Vec::with_capacity(transaction.outputs.len());
         for (output, _) in transaction.outputs.iter() {
-            Self::apply_output(state, output);
+            out.push(Self::apply_output(state, output));
         }
+        out
     }
 
     fn receive_tx(
