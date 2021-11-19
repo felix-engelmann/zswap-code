@@ -29,6 +29,7 @@ rand = "^0.8.4"
 lazy_static = "^1.4.0"
 
 ecies = "^0.2.1"
+log = "*"
 
 [patch.crates-io]
 # Bring forward compression functions over fields from next arkworks release.

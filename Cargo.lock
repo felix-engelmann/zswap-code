@@ -1170,5 +1170,6 @@ dependencies = [
  "ark-std",
  "ecies",
  "lazy_static",
+ "log",
  "rand 0.8.4",
 ]

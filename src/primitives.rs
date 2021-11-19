@@ -4,19 +4,19 @@ use ark_crypto_primitives::merkle_tree;
 use ark_ec::models::twisted_edwards_extended::GroupAffine;
 use ark_ec::models::TEModelParameters;
 use ark_ff::fields::{Field, PrimeField};
-use ark_ff::{Zero};
+use ark_ff::Zero;
 use ark_nonnative_field::NonNativeFieldVar;
 use ark_r1cs_std::alloc::{AllocVar, AllocationMode};
 use ark_r1cs_std::eq::EqGadget;
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_r1cs_std::groups::curves::twisted_edwards::AffineVar;
-use ark_relations::r1cs::{Namespace, SynthesisError};
 use ark_relations::ns;
+use ark_relations::r1cs::{Namespace, SynthesisError};
 #[cfg(test)]
 use rand::thread_rng;
 use rand::{CryptoRng, Rng};
-use std::marker::PhantomData;
 use std::borrow::Borrow;
+use std::marker::PhantomData;
 use std::ops::{Add, Neg, Sub};
 
 pub trait EncryptionScheme {
@@ -86,9 +86,7 @@ where
     }
 }
 
-pub trait ComSchemeGadget<T, U, H: ComScheme<U>, F: Field>:
-    ParameterGadget<F>
-{
+pub trait ComSchemeGadget<T, U, H: ComScheme<U>, F: Field>: ParameterGadget<F> {
     fn commit(params: &Self::ParametersVar, x: (&T, &T), r: &T) -> Result<T, SynthesisError>;
 }
 
@@ -101,7 +99,6 @@ where
     }
 }
 
-
 // Zero implies Add
 
 pub trait HomComScheme<T, V, R>
@@ -109,10 +106,7 @@ where
     V: Eq + Zero<Output = V> + Sub<Output = V> + Neg<Output = V>,
     R: Eq + Zero<Output = R> + Sub<Output = R> + Neg<Output = R>,
 {
-    type Com: Eq
-        + Zero<Output = Self::Com>
-        + Sub<Output = Self::Com>
-        + Neg<Output = Self::Com>;
+    type Com: Eq + Zero<Output = Self::Com> + Sub<Output = Self::Com> + Neg<Output = Self::Com>;
     type TypeWitness;
 
     /// Must be such that:
@@ -127,9 +121,7 @@ where
     V: EqGadget<F> + Add<Output = V> + Sub<Output = V>,
     R: EqGadget<F> + Add<Output = R> + Sub<Output = R>,
 {
-    type ComVar: EqGadget<F>
-        + Add<Output = Self::ComVar>
-        + Sub<Output = Self::ComVar>;
+    type ComVar: EqGadget<F> + Add<Output = Self::ComVar> + Sub<Output = Self::ComVar>;
     type TypeWitnessVar;
 
     fn verify(
@@ -151,8 +143,7 @@ where
 // `type_`.
 #[allow(unused_variables)]
 impl<P: TEModelParameters, H: CompressionFunction<P::BaseField>>
-    HomComScheme<P::BaseField, P::ScalarField, P::ScalarField>
-    for MultiBasePedersen<P, H>
+    HomComScheme<P::BaseField, P::ScalarField, P::ScalarField> for MultiBasePedersen<P, H>
 where
     P::BaseField: PrimeField,
 {
@@ -201,12 +192,19 @@ where
     }
 }
 
-pub struct MultiBasePedersenTypeWitness<P: TEModelParameters> where P::BaseField: PrimeField {
+pub struct MultiBasePedersenTypeWitness<P: TEModelParameters>
+where
+    P::BaseField: PrimeField,
+{
     pub rejection_sampler: FpVar<P::BaseField>,
     pub curve_y: NonNativeFieldVar<P::ScalarField, P::BaseField>,
 }
 
-impl<P: TEModelParameters> AllocVar<(P::BaseField, P::ScalarField), P::BaseField> for MultiBasePedersenTypeWitness<P> where P::BaseField: PrimeField {
+impl<P: TEModelParameters> AllocVar<(P::BaseField, P::ScalarField), P::BaseField>
+    for MultiBasePedersenTypeWitness<P>
+where
+    P::BaseField: PrimeField,
+{
     fn new_variable<U: Borrow<(P::BaseField, P::ScalarField)>>(
         cs: impl Into<Namespace<P::BaseField>>,
         f: impl FnOnce() -> Result<U, SynthesisError>,
@@ -216,7 +214,11 @@ impl<P: TEModelParameters> AllocVar<(P::BaseField, P::ScalarField), P::BaseField
         f().and_then(|r| {
             let (r, y) = r.borrow();
             Ok(MultiBasePedersenTypeWitness {
-                rejection_sampler: FpVar::new_variable(ns!(cs, "rejection_sampler"), || Ok(r), mode)?,
+                rejection_sampler: FpVar::new_variable(
+                    ns!(cs, "rejection_sampler"),
+                    || Ok(r),
+                    mode,
+                )?,
                 curve_y: NonNativeFieldVar::new_variable(ns!(cs, "curve_y"), || Ok(y), mode)?,
             })
         })
