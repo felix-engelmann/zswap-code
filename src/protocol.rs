@@ -6,7 +6,7 @@ use crate::zswap::{Transaction, ZSwapScheme};
 use ark_crypto_primitives::merkle_tree::constraints::PathVar;
 use ark_crypto_primitives::merkle_tree::{self, IdentityDigestConverter, Path};
 use ark_ec::models::twisted_edwards_extended::GroupAffine;
-use ark_ec::models::{ModelParameters, TEModelParameters};
+use ark_ec::models::{ModelParameters};
 use ark_ff::bytes::{FromBytes, ToBytes};
 use ark_ff::fields::PrimeField;
 use ark_ff::{UniformRand, Zero};
@@ -23,9 +23,8 @@ use ark_snark::{CircuitSpecificSetupSNARK, SNARK};
 use rand::{CryptoRng, Rng};
 use std::borrow::Borrow;
 use std::collections::HashSet;
-use std::hash::Hash;
+use std::hash::{Hash,Hasher};
 use std::io::{self, Cursor, Read, Write};
-use std::marker::PhantomData;
 
 
 
@@ -528,21 +527,54 @@ impl ConstraintSynthesizer<DpF> for LangOutput {
 //struct ProofW(<DpSNARK as SNARK<DpF>>::Proof); // try wrapping?
 //struct HomComW(GroupAffine<DpG>);
 
+#[derive(Clone)]
+pub struct ZSwapSigInput(Proof,HomCom,<ZSwap as OneTimeAccount>::Nullifier);
+impl PartialEq for ZSwapSigInput {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0 && self.1 == other.1 && self.2 == other.2
+    }
+}
+impl Eq for ZSwapSigInput {}
+impl Hash for ZSwapSigInput {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // @volhovm Check this Cursor stuff is sane
+        // We don't have Hash implementation for Proof, so we hash the serialization instead
+        let mut proof_bytes: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        self.0.write(&mut proof_bytes).unwrap();
+        proof_bytes.into_inner().hash(state);
+        self.1.hash(state);
+        self.2.hash(state);
+    }
+}
 
+#[derive(Clone)]
+pub struct ZSwapSigOutput(Proof,HomCom,(<ZSwap as OneTimeAccount>::Note,
+                                        <ZSwap as OneTimeAccount>::Ciphertext));
+impl PartialEq for ZSwapSigOutput {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0 && self.1 == other.1 && self.2 == other.2
+    }
+}
+impl Eq for ZSwapSigOutput {}
+impl Hash for ZSwapSigOutput {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // @volhovm Check this Cursor stuff is sane
+        // We don't have Hash implementation for Proof, so we hash the serialization instead
+        let mut proof_bytes: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        self.0.write(&mut proof_bytes).unwrap();
+        proof_bytes.into_inner().hash(state);
+        self.1.hash(state);
+        self.2.hash(state);
+    }
+}
+
+
+
+
+//#[derive(PartialEq,Eq,Hash,Clone)]
 pub struct ZSwapSignature {
-    pub input_signatures: HashSet<(
-        Proof,
-        HomCom,
-        <ZSwap as OneTimeAccount>::Nullifier,
-    )>,
-    pub output_signatures: HashSet<(
-        Proof,
-        HomCom,
-        (
-            <ZSwap as OneTimeAccount>::Note,
-            <ZSwap as OneTimeAccount>::Ciphertext,
-        ),
-    )>,
+    pub input_signatures: HashSet<ZSwapSigInput>,
+    pub output_signatures: HashSet<ZSwapSigOutput>,
     pub randomness: EmbeddedField,
 }
 
@@ -552,10 +584,6 @@ pub enum ZSwapError {
 }
 
 impl ZSwapScheme for ZSwap
-//where
-//    EmbeddedField: Hash,
-//    HomCom: Hash + Clone,
-//    Proof: Eq + Hash,
 {
     type PublicParameters = ZSwapPublicParams;
     type Signature = ZSwapSignature;
@@ -591,6 +619,7 @@ impl ZSwapScheme for ZSwap
         outputs: &[(
             Self::PublicKey,
             Self::Note,
+            Self::Ciphertext,
             Self::Attributes,
             Self::Randomness,
         )],
@@ -617,8 +646,8 @@ impl ZSwapScheme for ZSwap
             .map(|(output,rc)|
               <DpHomComScheme as
                HomComScheme<_,_,_>>::
-                 commit(&From::from(output.2.type_),
-                        &From::from(output.2.value),
+                 commit(&From::from(output.3.type_),
+                        &From::from(output.3.value),
                         &rc).0)
             .collect();
 
@@ -645,8 +674,8 @@ impl ZSwapScheme for ZSwap
             };
             let proof =
                 <DpSNARK as SNARK<DpF>>::prove(&params.spend_proving_key,
-                                                       circuit,
-                                                       rng)
+                                               circuit,
+                                               rng)
                 .map_err(ZSwapError::ZSwapErrorCircuit)?;
             proofs_s.push(proof);
         }
@@ -687,9 +716,9 @@ impl ZSwapScheme for ZSwap
                 com: com_t[i],
 
                 // Witnesses
-                type_: From::from(outputs[i].2.type_),
-                value: From::from(outputs[i].2.value),
-                r: outputs[i].3.clone(),
+                type_: From::from(outputs[i].3.type_),
+                value: From::from(outputs[i].3.value),
+                r: outputs[i].4.clone(),
                 rc: rc_t[i]
             };
             let proof =
@@ -699,27 +728,27 @@ impl ZSwapScheme for ZSwap
         }
 
 
-        let mut input_signatures: HashSet<(
-            Proof,
-            DpHomCom,
-            Self::Nullifier)> = HashSet::new();
-        for i in 0..outputs.len() {
-            // The thing must satisfy Eq,Hash but it doesn't
-            // input_signatures.insert((proofs_s[i],com_s[i],inputs[i].2));
-        }
-        let output_signatures: HashSet<(
-            Proof,
-            DpHomCom,
-            (Self::Note,
-             Self::Ciphertext))> = HashSet::new();
         let randomness: EmbeddedField =
             rc_s.iter().fold(From::from(0),|x:EmbeddedField,y| x + y) -
             rc_t.iter().fold(From::from(0),|x:EmbeddedField,y| x + y);
 
-        Ok(ZSwapSignature {
-            input_signatures,
-            output_signatures,
-            randomness })
+        let mut input_signatures: HashSet<ZSwapSigInput> = HashSet::new();
+        for i in 0..inputs.len() {
+            // @volhovm TODO: no need to clone the proof here
+            input_signatures.insert(
+                ZSwapSigInput(proofs_s[i].clone(),com_s[i],inputs[i].2));
+        }
+        let mut output_signatures: HashSet<ZSwapSigOutput> = HashSet::new();
+        for i in 0..outputs.len() {
+            // @volhovm TODO: no need to clone the proof here
+            output_signatures.insert(
+                ZSwapSigOutput(proofs_t[i].clone(),
+                               com_t[i],
+                               (outputs[i].1,outputs[i].2.clone())));
+        }
+
+
+        Ok(ZSwapSignature{input_signatures,output_signatures,randomness})
     }
 
     fn verify_tx<R: Rng + CryptoRng + ?Sized>(
@@ -733,9 +762,9 @@ impl ZSwapScheme for ZSwap
         let com_one: HomCom = Zero::zero();
         let input_minus_output: HomCom =
             signature.input_signatures.iter()
-            .map(|(_,com,_)| com.clone()).chain(
+            .map(|ZSwapSigInput(_,com,_)| com.clone()).chain(
                 signature.output_signatures.iter()
-                .map(|(_,com,_)| -com.clone()))
+                .map(|ZSwapSigOutput(_,com,_)| -com.clone()))
             .fold(com_one,|x,y| x + y);
 
         let com_rc: HomCom =
@@ -758,6 +787,13 @@ impl ZSwapScheme for ZSwap
 
         let coms_check = input_minus_output - com_rc - deltas_coms == com_one;
 
+
+        for ZSwapSigInput(proof,com,nul) in signature.input_signatures.iter() {
+            let instance: &[DpF] = unimplemented!();
+            let res = <DpSNARK as SNARK<DpF>>::verify(&params.spend_verifying_key,instance,proof)
+                .map_err(ZSwapError::ZSwapErrorCircuit)?;
+        }
+
         return Ok(coms_check);
     }
 
@@ -779,23 +815,18 @@ impl ZSwapScheme for ZSwap
         signatures: &[Self::Signature],
         rng: &mut R,
     ) -> Result<Self::Signature, Self::Error> {
-        unimplemented!()
-
-        // The issue with the code below is that signature elements don't
-        // implement Eq/Hash/Clone, so we need wrappers probably.
-
-//        let mut input_signatures = HashSet::new();
-//        let mut output_signatures = HashSet::new();
-//        let mut randomness = EmbeddedField::zero();
-//        for sig in signatures {
-//            input_signatures.extend(sig.input_signatures.iter().cloned());
-//            output_signatures.extend(sig.output_signatures.iter().cloned());
-//            randomness += sig.randomness;
-//        }
-//        Ok(ZSwapSignature {
-//            input_signatures,
-//            output_signatures,
-//            randomness,
-//        })
+        let mut input_signatures = HashSet::new();
+        let mut output_signatures = HashSet::new();
+        let mut randomness = EmbeddedField::zero();
+        for sig in signatures {
+            input_signatures.extend(sig.input_signatures.iter().cloned());
+            output_signatures.extend(sig.output_signatures.iter().cloned());
+            randomness += sig.randomness;
+        }
+        Ok(ZSwapSignature {
+            input_signatures,
+            output_signatures,
+            randomness,
+        })
     }
 }
