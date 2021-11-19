@@ -521,11 +521,12 @@ impl ConstraintSynthesizer<DpF> for LangSpend {
 
 struct LangOutput {
     // Public inputs
-    pk: DpF,
     note: DpF,
     com: GroupAffine<DpG>,
+    msg: DpF,
 
     // Witnesses
+    pk: DpF,
     type_: DpF,
     value: EmbeddedField,
     r: <ZSwap as OneTimeAccount>::Randomness,
@@ -535,10 +536,11 @@ struct LangOutput {
 impl LangOutput {
     fn new() -> Self {
         LangOutput {
-            pk: Default::default(),
             note: Default::default(),
             com: Default::default(),
+            msg: Default::default(),
 
+            pk: Default::default(),
             type_: Default::default(),
             value: Default::default(),
             r: Default::default(),
@@ -549,10 +551,11 @@ impl LangOutput {
 
 impl ConstraintSynthesizer<DpF> for LangOutput {
     fn generate_constraints(self, cs: ConstraintSystemRef<DpF>) -> r1cs::Result<()> {
-        let pk = FpVar::new_input(ns!(cs, "pk"), || Ok(self.pk))?;
         let note = FpVar::new_input(ns!(cs, "note"), || Ok(self.note))?;
         let com = AffineVar::<_, FpVar<DpF>>::new_input(ns!(cs, "com"), || Ok(self.com))?;
+        let msg = FpVar::new_input(ns!(cs, "msg"), || Ok(self.msg))?;
 
+        let pk = FpVar::new_witness(ns!(cs, "pk"), || Ok(self.pk))?;
         let (_, type_wit) = DpHomComScheme::commit(&self.type_, &self.value, &self.rc);
         let type_ = FpVar::new_witness(ns!(cs, "type"), || Ok(self.type_))?;
         let type_wit =
@@ -587,7 +590,7 @@ fn estimate_constraints<C: ConstraintSynthesizer<DpF>>(c: C) -> r1cs::Result<usi
 
 #[derive(PartialEq, Eq, Clone)]
 pub struct ZSwapSignature {
-    pub input_signatures: HashSet<(Proof, HomCom, <ZSwap as OneTimeAccount>::Nullifier)>,
+    pub input_signatures: HashSet<(Proof, HomCom, <ZSwap as OneTimeAccount>::Nullifier, DpF)>,
     pub output_signatures: HashSet<(
         Proof,
         HomCom,
@@ -609,6 +612,33 @@ impl From<SynthesisError> for ZSwapError {
     fn from(err: <DpSNARK as SNARK<DpF>>::Error) -> Self {
         Self::Circuit(err)
     }
+}
+
+fn ciphertext_to_field(mut c: &[u8]) -> DpF {
+    // Idea: convert to Vec<DpF> by interpreting as large chunks, then Poseidon compress.
+    // Assumption: u128 fits comfortably into our field.
+    let mut field_elems = Vec::with_capacity(c.len() / 16 + 1);
+    while c.len() > 16 {
+        let mut f = 0u128;
+        for i in 0..16 {
+            f <<= 8;
+            f ^= c[i] as u128;
+        }
+        field_elems.push(f.into());
+        c = &c[16..]
+    }
+    let mut f = 0u128;
+    for i in 0..c.len() {
+        f <<= 8;
+        f ^= c[i] as u128;
+    }
+    field_elems.push(f.into());
+
+    while field_elems.len() > 1 {
+        let (a, b) = (field_elems.pop().unwrap(), field_elems.pop().unwrap());
+        field_elems.push(<DpHash as CompressionFunction<_>>::compress(&a, &b));
+    }
+    field_elems[0]
 }
 
 impl ZSwapScheme for ZSwap {
@@ -654,113 +684,102 @@ impl ZSwapScheme for ZSwap {
         state: &Self::State,
         rng: &mut R,
     ) -> Result<Self::Signature, Self::Error> {
-        let rc_s: Vec<EmbeddedField> = (0..inputs.len()).map(|_| UniformRand::rand(rng)).collect();
-        let com_s: Vec<DpHomCom> = inputs
+        let com_s: Vec<(EmbeddedField, DpHomCom)> = inputs
             .iter()
-            .zip(rc_s.iter())
-            .map(|(input, rc)| {
-                <DpHomComScheme as HomComScheme<_, _, _>>::commit(
+            .map(|input| {
+                let rc = UniformRand::rand(rng);
+                let com = <DpHomComScheme as HomComScheme<_, _, _>>::commit(
                     &From::from(input.4.type_),
                     &From::from(input.4.value),
                     &rc,
                 )
-                .0
+                .0;
+                (rc, com)
             })
             .collect();
 
-        let rc_t: Vec<EmbeddedField> = (0..inputs.len()).map(|_| UniformRand::rand(rng)).collect();
-        let com_t: Vec<DpHomCom> = outputs
+        let com_t: Vec<(EmbeddedField, DpHomCom)> = outputs
             .iter()
-            .zip(rc_t.iter())
-            .map(|(output, rc)| {
-                <DpHomComScheme as HomComScheme<_, _, _>>::commit(
+            .map(|output| {
+                let rc = UniformRand::rand(rng);
+                let com = <DpHomComScheme as HomComScheme<_, _, _>>::commit(
                     &From::from(output.3.type_),
                     &From::from(output.3.value),
                     &rc,
                 )
-                .0
+                .0;
+                (rc, com)
             })
             .collect();
 
         let mut proofs_s: Vec<Proof> = Vec::new();
-        for i in 0..inputs.len() {
+        for ((sk, note, nul, st_wit, attrib, r), (rc, com)) in inputs.iter().zip(com_s.iter()) {
             // part of params
             let st: DpF = state.roots.last().ok_or(ZSwapError::Str("bla"))?.clone();
             let circuit = LangSpend {
                 // Public inputs
-                st: st,
-                nul: inputs[i].2,
-                com: com_s[i],
+                st,
+                nul: *nul,
+                com: *com,
 
                 // Witnesses
-                path: inputs[i].3.clone(),
-                sk: inputs[i].0 .0,
+                path: st_wit.clone(),
+                sk: sk.0,
                 // @volhovm: I'm a bit worried about these conversions.
                 // Is input field smaller than the output one? i.e. is `from` injective?
-                type_: From::from(inputs[i].4.type_),
-                value: From::from(inputs[i].4.value),
-                r: inputs[i].5.clone(),
-                rc: rc_s[i],
-            };
-            let proof = <DpSNARK as SNARK<DpF>>::prove(&params.spend_proving_key, circuit, rng)?;
-            proofs_s.push(Proof(proof));
-        }
-
-        let mut proofs_s: Vec<Proof> = Vec::new();
-        for i in 0..inputs.len() {
-            // part of params
-            let st: DpF = state.roots.last().ok_or(ZSwapError::Str("bla"))?.clone();
-            let circuit = LangSpend {
-                // Public inputs
-                st: st,
-                nul: inputs[i].2,
-                com: com_s[i],
-
-                // Witnesses
-                path: inputs[i].3.clone(),
-                sk: inputs[i].0 .0,
-                // @volhovm: I'm a bit worried about these conversions.
-                // Is input field smaller than the output one? i.e. is `from` injective?
-                type_: From::from(inputs[i].4.type_),
-                value: From::from(inputs[i].4.value),
-                r: inputs[i].5.clone(),
-                rc: rc_s[i],
+                type_: From::from(attrib.type_),
+                value: From::from(attrib.value),
+                r: r.clone(),
+                rc: *rc,
             };
             let proof = <DpSNARK as SNARK<DpF>>::prove(&params.spend_proving_key, circuit, rng)?;
             proofs_s.push(Proof(proof));
         }
 
         let mut proofs_t: Vec<Proof> = Vec::new();
-        for i in 0..outputs.len() {
+        for ((pk, note, ciph, attrib, r), (rc, com)) in outputs.iter().zip(com_t.iter()) {
             let circuit = LangOutput {
                 // Public inputs
-                pk: outputs[i].0 .0,
-                note: outputs[i].1,
-                com: com_t[i],
+                note: *note,
+                com: *com,
+                msg: ciphertext_to_field(&ciph[..]),
 
                 // Witnesses
-                type_: From::from(outputs[i].3.type_),
-                value: From::from(outputs[i].3.value),
-                r: outputs[i].4.clone(),
-                rc: rc_t[i],
+                pk: pk.0,
+                type_: From::from(attrib.type_),
+                value: From::from(attrib.value),
+                r: r.clone(),
+                rc: *rc,
             };
-            let proof = <DpSNARK as SNARK<DpF>>::prove(&params.spend_proving_key, circuit, rng)?;
+            let proof = <DpSNARK as SNARK<DpF>>::prove(&params.output_proving_key, circuit, rng)?;
             proofs_t.push(Proof(proof));
         }
 
-        let mut input_signatures: HashSet<(Proof, DpHomCom, Self::Nullifier)> = HashSet::new();
-        for ((proof, com), nul) in proofs_s
+        let mut input_signatures: HashSet<(Proof, DpHomCom, Self::Nullifier, DpF)> = HashSet::new();
+        for ((proof, (_, com)), nul) in proofs_s
             .into_iter()
-            .zip(com_s.into_iter())
+            .zip(com_s.iter())
             .zip(inputs.into_iter().map(|t| t.2))
         {
-            input_signatures.insert((proof, com, nul));
+            input_signatures.insert((proof, *com, nul, state.merkle_tree.root()));
         }
-        let output_signatures: HashSet<(Proof, DpHomCom, (Self::Note, Self::Ciphertext))> =
+        let mut output_signatures: HashSet<(Proof, DpHomCom, (Self::Note, Self::Ciphertext))> =
             HashSet::new();
-        let randomness: EmbeddedField =
-            rc_s.iter().fold(From::from(0), |x: EmbeddedField, y| x + y)
-                - rc_t.iter().fold(From::from(0), |x: EmbeddedField, y| x + y);
+        for ((proof, (_, com)), (_, note, ciph, _, _)) in proofs_t
+            .into_iter()
+            .zip(com_t.iter())
+            .zip(outputs.into_iter())
+        {
+            output_signatures.insert((proof, *com, (*note, ciph.clone())));
+        }
+        let randomness: EmbeddedField = com_s
+            .iter()
+            .map(|(rc, _)| rc)
+            .fold(From::from(0), |x: EmbeddedField, y| x + y)
+            - com_t
+                .iter()
+                .map(|(rc, _)| rc)
+                .fold(From::from(0), |x: EmbeddedField, y| x + y);
 
         Ok(ZSwapSignature {
             input_signatures,
@@ -806,10 +825,18 @@ impl ZSwapScheme for ZSwap {
 
         let coms_check = input_minus_output - com_rc - deltas_coms == com_one;
 
-        for sig in signature.input_signatures.iter() {
-            let instance: &[DpF] = unimplemented!();
-            let res =
-                <DpSNARK as SNARK<DpF>>::verify(&params.spend_verifying_key, instance, &sig.0 .0)?;
+        for (proof, com, nul, rt) in signature.input_signatures.iter() {
+            let instance: &[DpF] = &[*rt, *nul, com.x, com.y];
+            if !DpSNARK::verify(&params.spend_verifying_key, instance, &proof.0)? {
+                return Ok(false);
+            };
+        }
+        for (proof, com, (note, ciphertext)) in signature.output_signatures.iter() {
+            let encoded = ciphertext_to_field(&ciphertext[..]);
+            let instance: &[DpF] = &[*note, com.x, com.y, encoded];
+            if !DpSNARK::verify(&params.output_verifying_key, instance, &proof.0)? {
+                return Ok(false);
+            };
         }
 
         return Ok(coms_check);
