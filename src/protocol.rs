@@ -887,7 +887,7 @@ impl ZSwapScheme for ZSwap {
             if !DpSNARK::verify(&params.output_verifying_key, instance, &proof.0)? {
                 return Ok(false);
             };
-            info!("\tSpend proof verify took {}μs", Instant::now().duration_since(t0).as_micros());
+            info!("\tOutput proof verify took {}μs", Instant::now().duration_since(t0).as_micros());
         }
         let t0 = Instant::now();
         let mut expected_inputs: Vec<_> = signature
