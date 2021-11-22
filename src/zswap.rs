@@ -100,6 +100,11 @@ where
     Z::Note: Ord,
     Z::Ciphertext: Ord,
 {
+    pub fn normalise(&mut self) {
+        self.inputs.sort();
+        self.outputs.sort();
+    }
+
     pub fn merge(mut self, other: Self) -> Self {
         self.inputs.extend(other.inputs);
         self.inputs.sort();

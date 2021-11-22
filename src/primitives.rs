@@ -290,8 +290,19 @@ where
         com: &Self::ComVar,
     ) -> Result<(), SynthesisError> {
         let x = HGadget::compress(params, type_, &wit.rejection_sampler)?;
-        // FIXME: h isn't being curve/prime-order checked!
-        let h = AffineVar::<P, FpVar<P::BaseField>>::new(x, wit.curve_y.clone());
+        let h = if x.cs().is_in_setup_mode() {
+            AffineVar::<P, FpVar<P::BaseField>>::new_witness(ns!(x.cs(), "h"), || {
+                Ok(GroupAffine::<P>::prime_subgroup_generator())
+            })
+        } else {
+            let x_val = x.value()?;
+            let y_val = wit.curve_y.value()?;
+            AffineVar::<P, FpVar<P::BaseField>>::new_witness(ns!(x.cs(), "h"), || {
+                Ok(GroupAffine::new(x_val, y_val))
+            })
+        }?;
+        h.x.enforce_equal(&x)?;
+        h.y.enforce_equal(&wit.curve_y)?;
         let g = AffineVar::<P, FpVar<P::BaseField>>::new_constant(
             ns!(h.cs(), "g"),
             GroupAffine::<P>::prime_subgroup_generator(),

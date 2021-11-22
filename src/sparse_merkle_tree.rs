@@ -6,7 +6,10 @@ use std::rc::Rc;
 
 pub struct SparseMerkleTree<P: Config>(MerkleTreeNode<P>);
 
-impl<P: Config> Debug for SparseMerkleTree<P> where P::LeafDigest: Debug {
+impl<P: Config> Debug for SparseMerkleTree<P>
+where
+    P::LeafDigest: Debug,
+{
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
         self.0.fmt(f)
     }
@@ -30,10 +33,21 @@ enum MerkleTreeNode<P: Config> {
     },
 }
 
-impl<P: Config> Debug for MerkleTreeNode<P> where P::LeafDigest: Debug {
+impl<P: Config> Debug for MerkleTreeNode<P>
+where
+    P::LeafDigest: Debug,
+{
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
         for (path, leaf) in self.leaves() {
-            writeln!(f, "{}: {:?}", path.into_iter().map(|b| if b { "r" } else { "l" }).collect::<Vec<_>>().join(""), leaf)?;
+            writeln!(
+                f,
+                "{}: {:?}",
+                path.into_iter()
+                    .map(|b| if b { "r" } else { "l" })
+                    .collect::<Vec<_>>()
+                    .join(""),
+                leaf
+            )?;
         }
         Ok(())
     }
@@ -72,15 +86,18 @@ impl<P: Config> MerkleTreeNode<P> {
         match self {
             Leaf { hash, .. } => vec![(Vec::new(), hash.clone())],
             Stub { .. } => Vec::new(),
-            Node { left, right, .. } => {
-                left.leaves().into_iter().map(|(mut path, digest)| {
+            Node { left, right, .. } => left
+                .leaves()
+                .into_iter()
+                .map(|(mut path, digest)| {
                     path.push(false);
                     (path, digest)
-                }).chain(right.leaves().into_iter().map(|(mut path, digest)| {
+                })
+                .chain(right.leaves().into_iter().map(|(mut path, digest)| {
                     path.push(true);
                     (path, digest)
-                })).collect()
-            }
+                }))
+                .collect(),
         }
     }
 

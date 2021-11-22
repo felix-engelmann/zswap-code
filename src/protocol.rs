@@ -14,9 +14,11 @@ use ark_nonnative_field::{
     params::OptimizationType, AllocatedNonNativeFieldVar, NonNativeFieldVar,
 };
 use ark_r1cs_std::alloc::{AllocVar, AllocationMode};
+use ark_r1cs_std::bits::boolean::Boolean;
 use ark_r1cs_std::eq::EqGadget;
 use ark_r1cs_std::fields::fp::FpVar;
 use ark_r1cs_std::groups::curves::twisted_edwards::AffineVar;
+use ark_r1cs_std::ToBitsGadget;
 use ark_relations::r1cs::{
     self, ConstraintSynthesizer, ConstraintSystem, ConstraintSystemRef, Namespace,
     OptimizationGoal, SynthesisError,
@@ -26,9 +28,10 @@ use ark_snark::{CircuitSpecificSetupSNARK, SNARK};
 use rand::{CryptoRng, Rng};
 use std::borrow::Borrow;
 use std::collections::HashSet;
+use std::error::Error as StdError;
 use std::hash::{Hash, Hasher};
 use std::io::{self, Cursor, Read, Write};
-use std::error::Error as StdError;
+use std::time::Instant;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Type aliases
@@ -499,6 +502,7 @@ impl ConstraintSynthesizer<DpF> for LangSpend {
             )?;
         let value: EmbeddedField = self.value.into();
         let value = AllocatedNonNativeFieldVar::new_witness(ns!(cs, "value"), || Ok(value))?;
+        Boolean::enforce_smaller_or_equal_than_le(&value.to_bits_le()?[..], &[u64::MAX])?;
         let r = RandomnessVar::new_witness(ns!(cs, "r"), || Ok(self.r))?;
         let rc = NonNativeFieldVar::new_witness(ns!(cs, "rc"), || Ok(self.rc))?;
 
@@ -574,6 +578,7 @@ impl ConstraintSynthesizer<DpF> for LangOutput {
             )?;
         let value: EmbeddedField = self.value.into();
         let value = AllocatedNonNativeFieldVar::new_witness(ns!(cs, "value"), || Ok(value))?;
+        Boolean::enforce_smaller_or_equal_than_le(&value.to_bits_le()?[..], &[u64::MAX])?;
         let r = RandomnessVar::new_witness(ns!(cs, "r"), || Ok(self.r))?;
         let rc = NonNativeFieldVar::new_witness(ns!(cs, "rc"), || Ok(self.rc))?;
 
@@ -707,9 +712,12 @@ impl ZSwapScheme for ZSwap {
         state: &Self::State,
         rng: &mut R,
     ) -> Result<Self::Signature, Self::Error> {
+        info!("Signing timings:");
+        let t0_sign = Instant::now();
         let com_s: Vec<(EmbeddedField, DpHomCom)> = inputs
             .iter()
             .map(|input| {
+                let t0 = Instant::now();
                 let rc = UniformRand::rand(rng);
                 let com = <DpHomComScheme as HomComScheme<_, _, _>>::commit(
                     &From::from(input.4.type_),
@@ -717,6 +725,7 @@ impl ZSwapScheme for ZSwap {
                     &rc,
                 )
                 .0;
+                info!("\tHomomorphic commitment took {}μs", Instant::now().duration_since(t0).as_micros());
                 (rc, com)
             })
             .collect();
@@ -724,6 +733,7 @@ impl ZSwapScheme for ZSwap {
         let com_t: Vec<(EmbeddedField, DpHomCom)> = outputs
             .iter()
             .map(|output| {
+                let t0 = Instant::now();
                 let rc = UniformRand::rand(rng);
                 let com = <DpHomComScheme as HomComScheme<_, _, _>>::commit(
                     &From::from(output.3.type_),
@@ -731,12 +741,14 @@ impl ZSwapScheme for ZSwap {
                     &rc,
                 )
                 .0;
+                info!("\tHomomorphic commitment took {}μs", Instant::now().duration_since(t0).as_micros());
                 (rc, com)
             })
             .collect();
 
         let mut proofs_s: Vec<Proof> = Vec::new();
         for ((sk, note, nul, st_wit, attrib, r), (rc, com)) in inputs.iter().zip(com_s.iter()) {
+            let t0 = Instant::now();
             // part of params
             let st: DpF = state.merkle_tree.root();
             let path = state.merkle_tree.generate_proof(*st_wit)?;
@@ -757,11 +769,13 @@ impl ZSwapScheme for ZSwap {
                 rc: *rc,
             };
             let proof = <DpSNARK as SNARK<DpF>>::prove(&params.spend_proving_key, circuit, rng)?;
+            info!("\tSpend proof took {}μs", Instant::now().duration_since(t0).as_micros());
             proofs_s.push(Proof(proof));
         }
 
         let mut proofs_t: Vec<Proof> = Vec::new();
         for ((pk, note, ciph, attrib, r), (rc, com)) in outputs.iter().zip(com_t.iter()) {
+            let t0 = Instant::now();
             let circuit = LangOutput {
                 // Public inputs
                 note: *note,
@@ -776,8 +790,11 @@ impl ZSwapScheme for ZSwap {
                 rc: *rc,
             };
             let proof = <DpSNARK as SNARK<DpF>>::prove(&params.output_proving_key, circuit, rng)?;
+            info!("\tOutput proof took {}μs", Instant::now().duration_since(t0).as_micros());
             proofs_t.push(Proof(proof));
         }
+
+        let t0 = Instant::now();
 
         let mut input_signatures: HashSet<(Proof, DpHomCom, Self::Nullifier, DpF)> = HashSet::new();
         for ((proof, (_, com)), nul) in proofs_s
@@ -804,6 +821,8 @@ impl ZSwapScheme for ZSwap {
                 .iter()
                 .map(|(rc, _)| rc)
                 .fold(From::from(0), |x: EmbeddedField, y| x + y);
+        info!("\tRandomness aggregation and transaction assembly took {}μs", Instant::now().duration_since(t0).as_micros());
+        info!("\tOverall {}μs", Instant::now().duration_since(t0_sign).as_micros());
 
         Ok(ZSwapSignature {
             input_signatures,
@@ -819,6 +838,9 @@ impl ZSwapScheme for ZSwap {
         signature: &Self::Signature,
         rng: &mut R,
     ) -> Result<bool, Self::Error> {
+        info!("Verifying timing:");
+        let t0_verify = Instant::now();
+        let t0 = Instant::now();
         let com_one: HomCom = Zero::zero();
         let input_minus_output: HomCom = signature
             .input_signatures
@@ -827,7 +849,7 @@ impl ZSwapScheme for ZSwap {
             .chain(signature.output_signatures.iter().map(|sig| -sig.1.clone()))
             .fold(com_one, |x, y| x + y);
 
-        let com_rc: HomCom = <DpHomComScheme as HomComScheme<_, _, _>>::commit(
+        let com_rc: HomCom = DpHomComScheme::commit(
             &<DpF as Zero>::zero(),
             &<EmbeddedField as Zero>::zero(),
             &signature.randomness,
@@ -838,7 +860,7 @@ impl ZSwapScheme for ZSwap {
             .deltas
             .iter()
             .map(|(type_, val)| {
-                <DpHomComScheme as HomComScheme<_, _, _>>::commit(
+                DpHomComScheme::commit(
                     &<DpF as From<u64>>::from(type_.clone()),
                     &<EmbeddedField as From<i128>>::from(val.clone()),
                     &<EmbeddedField as Zero>::zero(),
@@ -848,22 +870,44 @@ impl ZSwapScheme for ZSwap {
             .fold(com_one, |x, y| x + y);
 
         let coms_check = input_minus_output - com_rc - deltas_coms == com_one;
+        info!("\tCommitment checks took {}μs", Instant::now().duration_since(t0).as_micros());
 
         for (proof, com, nul, rt) in signature.input_signatures.iter() {
+            let t0 = Instant::now();
             let instance: &[DpF] = &[*rt, *nul, com.x, com.y];
             if !DpSNARK::verify(&params.spend_verifying_key, instance, &proof.0)? {
                 return Ok(false);
             };
+            info!("\tSpend proof verify took {}μs", Instant::now().duration_since(t0).as_micros());
         }
         for (proof, com, (note, ciphertext)) in signature.output_signatures.iter() {
+            let t0 = Instant::now();
             let encoded = ciphertext_to_field(&ciphertext[..]);
             let instance: &[DpF] = &[*note, com.x, com.y, encoded];
             if !DpSNARK::verify(&params.output_verifying_key, instance, &proof.0)? {
                 return Ok(false);
             };
+            info!("\tSpend proof verify took {}μs", Instant::now().duration_since(t0).as_micros());
         }
+        let t0 = Instant::now();
+        let mut expected_inputs: Vec<_> = signature
+            .input_signatures
+            .iter()
+            .map(|(_, _, nul, _)| *nul)
+            .collect();
+        let mut expected_outputs: Vec<_> = signature
+            .output_signatures
+            .iter()
+            .map(|(_, _, out)| out.clone())
+            .collect();
+        expected_inputs.sort();
+        expected_outputs.sort();
+        let transaction_matches_sig =
+            transaction.inputs == expected_inputs && transaction.outputs == expected_outputs;
+        info!("\tConsistency check took {}μs", Instant::now().duration_since(t0).as_micros());
+        info!("\tOverall {}μs", Instant::now().duration_since(t0_verify).as_micros());
 
-        return Ok(coms_check);
+        Ok(coms_check && transaction_matches_sig)
     }
 
     fn apply_input(state: &mut Self::State, input: &Self::Nullifier) {
