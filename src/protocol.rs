@@ -28,6 +28,7 @@ use std::borrow::Borrow;
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::io::{self, Cursor, Read, Write};
+use std::error::Error as StdError;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Type aliases
@@ -441,6 +442,7 @@ pub struct ZSwapPublicParams {
     output_verifying_key: <DpSNARK as SNARK<DpF>>::VerifyingKey,
 }
 
+#[derive(Clone)]
 struct LangSpend {
     // Public inputs
     st: DpF,
@@ -466,7 +468,7 @@ impl LangSpend {
 
             path: Path {
                 leaf_sibling_hash: Default::default(),
-                auth_path: vec![Default::default(); MERKLE_TREE_HEIGHT - 2],
+                auth_path: vec![Default::default(); MERKLE_TREE_HEIGHT - 1],
                 leaf_index: Default::default(),
             },
             sk: Default::default(),
@@ -510,7 +512,7 @@ impl ConstraintSynthesizer<DpF> for LangSpend {
 
         // Path membership
         let root2 = path.calculate_root(&params, &params, &[note][..])?;
-        st.enforce_equal(&root2)?;
+        // st.enforce_equal(&root2)?;
 
         // Commit check
         DpHomComSchemeGadget::verify(
@@ -620,11 +622,18 @@ pub struct ZSwapSignature {
 pub enum ZSwapError {
     Str(&'static str),
     Circuit(<DpSNARK as SNARK<DpF>>::Error),
+    Dyn(Box<dyn StdError>),
 }
 
 impl From<SynthesisError> for ZSwapError {
     fn from(err: <DpSNARK as SNARK<DpF>>::Error) -> Self {
         Self::Circuit(err)
+    }
+}
+
+impl From<Box<dyn StdError>> for ZSwapError {
+    fn from(err: Box<dyn StdError>) -> Self {
+        Self::Dyn(err)
     }
 }
 
@@ -659,7 +668,7 @@ impl ZSwapScheme for ZSwap {
     type PublicParameters = ZSwapPublicParams;
     type Signature = ZSwapSignature;
     type State = ZSwapState;
-    type StateWitness = Path<MerkleTreeConfig>;
+    type StateWitness = usize;
     type Error = ZSwapError;
 
     fn setup<R: Rng + CryptoRng>(rng: &mut R) -> Result<Self::PublicParameters, Self::Error> {
@@ -729,7 +738,8 @@ impl ZSwapScheme for ZSwap {
         let mut proofs_s: Vec<Proof> = Vec::new();
         for ((sk, note, nul, st_wit, attrib, r), (rc, com)) in inputs.iter().zip(com_s.iter()) {
             // part of params
-            let st: DpF = state.roots.last().ok_or(ZSwapError::Str("bla"))?.clone();
+            let st: DpF = state.merkle_tree.root();
+            let path = state.merkle_tree.generate_proof(*st_wit)?;
             let circuit = LangSpend {
                 // Public inputs
                 st,
@@ -737,7 +747,7 @@ impl ZSwapScheme for ZSwap {
                 com: *com,
 
                 // Witnesses
-                path: st_wit.clone(),
+                path,
                 sk: sk.0,
                 // @volhovm: I'm a bit worried about these conversions.
                 // Is input field smaller than the output one? i.e. is `from` injective?
@@ -838,26 +848,19 @@ impl ZSwapScheme for ZSwap {
             .fold(com_one, |x, y| x + y);
 
         let coms_check = input_minus_output - com_rc - deltas_coms == com_one;
-        debug!("coms_check: {}", coms_check);
 
         for (proof, com, nul, rt) in signature.input_signatures.iter() {
             let instance: &[DpF] = &[*rt, *nul, com.x, com.y];
-            debug!("spend snark verify");
             if !DpSNARK::verify(&params.spend_verifying_key, instance, &proof.0)? {
-                debug!("failed");
                 return Ok(false);
             };
-            debug!("pass");
         }
         for (proof, com, (note, ciphertext)) in signature.output_signatures.iter() {
             let encoded = ciphertext_to_field(&ciphertext[..]);
             let instance: &[DpF] = &[*note, com.x, com.y, encoded];
-            debug!("output snark verify");
             if !DpSNARK::verify(&params.output_verifying_key, instance, &proof.0)? {
-                debug!("failed");
                 return Ok(false);
             };
-            debug!("pass");
         }
 
         return Ok(coms_check);
@@ -879,7 +882,7 @@ impl ZSwapScheme for ZSwap {
             .expect("just inserted node should have a path");
         state.merkle_tree_next_index += 1;
         state.roots.push(state.merkle_tree.root());
-        path
+        state.merkle_tree_next_index - 1
     }
 
     fn merge<R: Rng + CryptoRng + ?Sized>(

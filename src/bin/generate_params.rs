@@ -2,9 +2,19 @@ use ark_std::UniformRand;
 use rand::rngs::OsRng;
 use std::collections::HashMap;
 use zswap_code::{Attributes, OneTimeAccount, Transaction, ZSwap, ZSwapScheme, ZSwapState};
+use ark_relations::r1cs::{ConstraintLayer, ConstraintSystem, TracingMode};
+use tracing_subscriber::layer::SubscriberExt;
+#[macro_use]
+extern crate log;
 
 fn main() {
     env_logger::init();
+
+    let mut layer = ConstraintLayer::default();
+    layer.mode = TracingMode::All;
+    let subscriber = tracing_subscriber::Registry::default().with(layer);
+    let _guard = tracing::subscriber::set_default(subscriber);
+
     let mut rng = OsRng;
     let params = ZSwap::setup(&mut rng).unwrap();
     println!("params generated!");
@@ -20,6 +30,7 @@ fn main() {
         value: 20,
     };
     let genesis_red = ZSwap::gen(&pk_alice.0, &genesis_red_attribs, &genesis_red_rnd);
+    info!("genesis_red: {:?}", genesis_red);
 
     let genesis_blue_rnd = UniformRand::rand(&mut rng);
     let genesis_blue_attribs = Attributes {
@@ -27,6 +38,7 @@ fn main() {
         value: 30,
     };
     let genesis_blue = ZSwap::gen(&pk_alice.0, &genesis_blue_attribs, &genesis_blue_rnd);
+    info!("genesis_blue: {:?}", genesis_blue);
 
     let mut state = ZSwapState::new();
     let path_genesis_red = ZSwap::apply_output(&mut state, &genesis_red);

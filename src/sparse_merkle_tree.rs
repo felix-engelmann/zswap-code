@@ -1,10 +1,16 @@
 use ark_crypto_primitives::merkle_tree::{Config, DigestConverter, LeafParam, Path, TwoToOneParam};
 use ark_crypto_primitives::{crh::TwoToOneCRHScheme, CRHScheme, Error};
 use std::error::Error as StdError;
-use std::fmt::{self, Display, Formatter};
+use std::fmt::{self, Debug, Display, Formatter};
 use std::rc::Rc;
 
 pub struct SparseMerkleTree<P: Config>(MerkleTreeNode<P>);
+
+impl<P: Config> Debug for SparseMerkleTree<P> where P::LeafDigest: Debug {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+        self.0.fmt(f)
+    }
+}
 
 enum MerkleTreeNode<P: Config> {
     Leaf {
@@ -22,6 +28,15 @@ enum MerkleTreeNode<P: Config> {
         height: usize,
         params: Rc<Params<P>>,
     },
+}
+
+impl<P: Config> Debug for MerkleTreeNode<P> where P::LeafDigest: Debug {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+        for (path, leaf) in self.leaves() {
+            writeln!(f, "{}: {:?}", path.into_iter().map(|b| if b { "r" } else { "l" }).collect::<Vec<_>>().join(""), leaf)?;
+        }
+        Ok(())
+    }
 }
 
 impl<P: Config> Clone for MerkleTreeNode<P> {
@@ -53,6 +68,22 @@ impl<P: Config> Clone for MerkleTreeNode<P> {
 }
 
 impl<P: Config> MerkleTreeNode<P> {
+    fn leaves(&self) -> Vec<(Vec<bool>, P::LeafDigest)> {
+        match self {
+            Leaf { hash, .. } => vec![(Vec::new(), hash.clone())],
+            Stub { .. } => Vec::new(),
+            Node { left, right, .. } => {
+                left.leaves().into_iter().map(|(mut path, digest)| {
+                    path.push(false);
+                    (path, digest)
+                }).chain(right.leaves().into_iter().map(|(mut path, digest)| {
+                    path.push(true);
+                    (path, digest)
+                })).collect()
+            }
+        }
+    }
+
     fn new(height: usize, params: Rc<Params<P>>) -> Self {
         if height == 0 {
             Leaf {

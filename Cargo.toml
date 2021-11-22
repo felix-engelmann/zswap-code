@@ -31,6 +31,8 @@ lazy_static = "^1.4.0"
 ecies = "^0.2.1"
 log = "*"
 env_logger = "*"
+tracing = "*"
+tracing-subscriber = "*"
 
 [patch.crates-io]
 # Bring forward compression functions over fields from next arkworks release.
