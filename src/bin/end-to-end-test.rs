@@ -3,7 +3,7 @@ use ark_std::UniformRand;
 use rand::rngs::OsRng;
 use std::collections::HashMap;
 use tracing_subscriber::layer::SubscriberExt;
-use zswap_code::{Attributes, OneTimeAccount, Transaction, ZSwap, ZSwapScheme, ZSwapState};
+use zswap::{Attributes, OneTimeAccount, Transaction, ZSwap, ZSwapScheme, ZSwapState};
 #[macro_use]
 extern crate log;
 

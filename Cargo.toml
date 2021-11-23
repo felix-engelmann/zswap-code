@@ -3,6 +3,10 @@ name = "zswap-code"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "zswap"
+path = "src/lib.rs"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
@@ -38,3 +42,11 @@ tracing-subscriber = "^0.2.25"
 # Bring forward compression functions over fields from next arkworks release.
 ark-crypto-primitives = { git = "https://github.com/arkworks-rs/crypto-primitives" }
 ark-sponge = { git = "https://github.com/arkworks-rs/sponge" }
+
+[dev-dependencies]
+criterion = "0.3.5"
+
+[[bench]]
+name = "mainbench"
+path = "bench/mainbench.rs"
+harness = false
