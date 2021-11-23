@@ -516,7 +516,7 @@ impl ConstraintSynthesizer<DpF> for LangSpend {
 
         // Path membership
         let root2 = path.calculate_root(&params, &params, &[note][..])?;
-        // st.enforce_equal(&root2)?;
+        st.enforce_equal(&root2)?;
 
         // Commit check
         DpHomComSchemeGadget::verify(

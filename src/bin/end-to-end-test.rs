@@ -98,7 +98,7 @@ fn main() {
     info!("tx1 verification");
     assert!(ZSwap::verify_tx(&params, &state, &tx1, &tx1_sig, &mut rng).unwrap());
     let wits = ZSwap::apply_tx(&mut state, &tx1);
-    let tx1_output1_wit = wits[0];
+    let tx1_output1_wit = wits[tx1.outputs.iter().position(|elem| elem.0 == tx1_output1).unwrap()];
     info!("\tdone");
 
     // Now: Alice has 10 RED, 30 BLUE, Bob has 10 RED
