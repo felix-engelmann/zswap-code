@@ -1,3 +1,5 @@
+#![allow(unused_imports)]
+
 use criterion::{criterion_group, criterion_main, Criterion, BatchSize};
 use std::time::Duration;
 use ark_relations::r1cs::{ConstraintLayer, TracingMode};
@@ -7,6 +9,7 @@ use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 use tracing_subscriber::layer::SubscriberExt;
 use zswap::{Attributes, OneTimeAccount, Transaction, ZSwap, ZSwapScheme, ZSwapState};
+
 
 
 fn rand_attr<T:Rng>(rng: &mut T) -> Attributes {
@@ -40,7 +43,6 @@ fn rand_tx_input<R: Rng + CryptoRng>(
 }
 
 fn rand_tx_output<R: Rng + CryptoRng>(
-    state: &mut ZSwapState,
     value: Option<u64>,
     type_: Option<u64>,
     rng: &mut R) -> ( <ZSwap as OneTimeAccount>::PublicKey,
@@ -54,7 +56,6 @@ fn rand_tx_output<R: Rng + CryptoRng>(
                            value : value.unwrap_or(attr_rand.value) };
     let r = UniformRand::rand(rng);
     let note = ZSwap::gen(&pk.0, &attr, &r);
-    let wit = ZSwap::apply_output(state, &note);
     let ciph = ZSwap::enc(&pk, &attr, &r, rng);
 
     (pk.clone(), note, ciph, attr,r)
@@ -65,7 +66,10 @@ fn bench_zswap(c: &mut Criterion) {
 
     let mut rng = OsRng;
     let mut rng2 = rand::thread_rng();
+    let mut rng3 = OsRng;
     let params = ZSwap::setup(&mut rng).unwrap();
+    let mut state = ZSwapState::new();
+    let mut state2 = ZSwapState::new();
 
     grp.bench_function("OTA.keygen", |b| b.iter(|| ZSwap::keygen(&mut rng)));
 
@@ -95,12 +99,19 @@ fn bench_zswap(c: &mut Criterion) {
         |b|
         b.iter_batched(|| { let sk = ZSwap::keygen(&mut rng2).1;
                             let r = UniformRand::rand(&mut rng2);
-                            return (sk,r) },
+                            (sk,r) },
                        |(sk,r)| ZSwap::nul_eval(&sk, &r),
                        BatchSize::LargeInput));
 
-
-    //grp.bench_function("setup", |b| b.iter(|| ZSwap::setup(&mut rng).unwrap()));
+    grp.bench_function(
+        "sign_tx(1->1)",
+        |b|
+        b.iter_batched(|| { let input = rand_tx_input(&mut state2,Option::None,Option::None,&mut rng3);
+                            let output = rand_tx_output(Option::None,Option::None,&mut rng3);
+                            ([input],[output]) },
+                       |(input,output)|
+                       ZSwap::sign_tx(&params, &input, &output, &mut state, &mut rng),
+                       BatchSize::LargeInput));
 
     grp.finish();
 }
