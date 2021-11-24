@@ -2,6 +2,22 @@ use crate::ota::*;
 use rand::{CryptoRng, Rng};
 use std::collections::{hash_map::Entry, HashMap};
 
+
+pub type ZSwapInput<Z> = (
+    <Z as OneTimeAccount>::SecretKey,
+    <Z as OneTimeAccount>::Note,
+    <Z as OneTimeAccount>::Nullifier,
+    <Z as ZSwapScheme>::StateWitness,
+    <Z as OneTimeAccount>::Attributes,
+    <Z as OneTimeAccount>::Randomness);
+
+pub type ZSwapOutput<Z> = (
+    <Z as OneTimeAccount>::PublicKey,
+    <Z as OneTimeAccount>::Note,
+    <Z as OneTimeAccount>::Ciphertext,
+    <Z as OneTimeAccount>::Attributes,
+    <Z as OneTimeAccount>::Randomness);
+
 pub trait ZSwapScheme: OneTimeAccount {
     type PublicParameters;
     type Signature;
@@ -13,21 +29,8 @@ pub trait ZSwapScheme: OneTimeAccount {
 
     fn sign_tx<R: Rng + CryptoRng + Sized>(
         params: &Self::PublicParameters,
-        inputs: &[(
-            Self::SecretKey,
-            Self::Note,
-            Self::Nullifier,
-            Self::StateWitness,
-            Self::Attributes,
-            Self::Randomness,
-        )],
-        outputs: &[(
-            Self::PublicKey,
-            Self::Note,
-            Self::Ciphertext,
-            Self::Attributes,
-            Self::Randomness,
-        )],
+        inputs: &[ZSwapInput<Self>],
+        outputs: &[ZSwapOutput<Self>],
         state: &Self::State,
         rng: &mut R,
     ) -> Result<Self::Signature, Self::Error>;
@@ -104,6 +107,7 @@ where
         self.inputs.sort();
         self.outputs.sort();
     }
+
 
     pub fn merge(mut self, other: Self) -> Self {
         self.inputs.extend(other.inputs);

@@ -8,7 +8,8 @@ use rand::rngs::OsRng;
 use rand::{CryptoRng, Rng};
 use std::collections::HashMap;
 use tracing_subscriber::layer::SubscriberExt;
-use zswap::{Attributes, OneTimeAccount, Transaction, ZSwap, ZSwapScheme, ZSwapState};
+use zswap::{Attributes, ZSwapInput, ZSwapOutput,
+            OneTimeAccount, Transaction, ZSwap, ZSwapScheme, ZSwapState};
 
 
 
@@ -24,12 +25,7 @@ fn rand_tx_input<R: Rng + CryptoRng>(
     state: &mut ZSwapState,
     value: Option<u64>,
     type_: Option<u64>,
-    rng: &mut R) -> ( <ZSwap as OneTimeAccount>::SecretKey,
-                      <ZSwap as OneTimeAccount>::Note,
-                      <ZSwap as OneTimeAccount>::Nullifier,
-                      <ZSwap as ZSwapScheme>::StateWitness,
-                      <ZSwap as OneTimeAccount>::Attributes,
-                      <ZSwap as OneTimeAccount>::Randomness) {
+    rng: &mut R) -> ZSwapInput<ZSwap> {
     let (pk, sk) = ZSwap::keygen(rng);
     let attr_rand = rand_attr(rng);
     let attr = Attributes{ type_ : type_.unwrap_or(attr_rand.type_),
@@ -45,11 +41,7 @@ fn rand_tx_input<R: Rng + CryptoRng>(
 fn rand_tx_output<R: Rng + CryptoRng>(
     value: Option<u64>,
     type_: Option<u64>,
-    rng: &mut R) -> ( <ZSwap as OneTimeAccount>::PublicKey,
-                      <ZSwap as OneTimeAccount>::Note,
-                      <ZSwap as OneTimeAccount>::Ciphertext,
-                      <ZSwap as OneTimeAccount>::Attributes,
-                      <ZSwap as OneTimeAccount>::Randomness) {
+    rng: &mut R) -> ZSwapOutput<ZSwap> {
     let (pk, _) = ZSwap::keygen(rng);
     let attr_rand = rand_attr(rng);
     let attr = Attributes{ type_ : type_.unwrap_or(attr_rand.type_),
@@ -60,6 +52,48 @@ fn rand_tx_output<R: Rng + CryptoRng>(
 
     (pk.clone(), note, ciph, attr,r)
 }
+
+pub fn from_input_output(inputs: &[ZSwapInput<ZSwap>],
+                         outputs: &[ZSwapOutput<ZSwap>]) -> Transaction<ZSwap> {
+    let mut deltas = HashMap::new();
+    for input in inputs {
+        let t: u64 = input.4.type_;
+        let v: u64 = input.4.value;
+        if let Some(x) = deltas.get_mut(&t) {
+            *x = *x + (v as i128);
+        } else { deltas.insert(t, v as i128); }
+    }
+    for output in outputs {
+        let t: u64 = output.3.type_;
+        let v: u64 = output.3.value;
+        if let Some(x) = deltas.get_mut(&t) {
+            *x = *x - (v as i128);
+        } else { deltas.insert(t, -(v as i128)); }
+    }
+
+    let mut tx = Transaction::<ZSwap> {
+        inputs: inputs.into_iter().map(|i| i.2).collect(),
+        outputs: outputs.into_iter().map(|o| (o.1, o.2.clone())).collect(),
+        deltas: deltas,
+    };
+    tx.normalise();
+
+    tx
+}
+
+fn rand_tx_1in_1out<R: Rng + CryptoRng>(
+    params: &<ZSwap as ZSwapScheme>::PublicParameters,
+    state: &mut <ZSwap as ZSwapScheme>::State,
+    rng: &mut R) -> (Transaction<ZSwap>,<ZSwap as ZSwapScheme>::Signature) {
+    let inputs = &[rand_tx_input(state,Option::None,Option::None,rng)];
+    let outputs = &[rand_tx_output(Option::None,Option::None,rng)];
+    let sig = ZSwap::sign_tx(params, inputs, outputs, state, rng).unwrap();
+    let tx = from_input_output(inputs, outputs);
+
+    (tx,sig)
+}
+
+
 
 fn bench_zswap(c: &mut Criterion) {
     let mut grp = c.benchmark_group("ZSwap");
@@ -103,6 +137,7 @@ fn bench_zswap(c: &mut Criterion) {
                        |(sk,r)| ZSwap::nul_eval(&sk, &r),
                        BatchSize::LargeInput));
 
+    // @volhovm: I have a suspicion this is faster than it should be.
     grp.bench_function(
         "sign_tx(1->1)",
         |b|
@@ -112,6 +147,27 @@ fn bench_zswap(c: &mut Criterion) {
                        |(input,output)|
                        ZSwap::sign_tx(&params, &input, &output, &mut state, &mut rng),
                        BatchSize::LargeInput));
+
+    // @volhovm: I have a suspicion this is faster than it should be.
+    grp.bench_function(
+        "build_tx(1->1)",
+        |b|
+        b.iter_batched(|| { let input = rand_tx_input(&mut state2,Option::None,Option::None,&mut rng3);
+                            let output = rand_tx_output(Option::None,Option::None,&mut rng3);
+                            ([input],[output]) },
+                       |(inputs,outputs)| from_input_output(&inputs,&outputs),
+                       BatchSize::LargeInput));
+
+    grp.bench_function(
+        "merge (1->1)&(1->1)",
+        |b|
+        b.iter_batched(|| {
+            let tx1 = rand_tx_1in_1out(&params, &mut state2,&mut rng2);
+            let tx2 = rand_tx_1in_1out(&params, &mut state2,&mut rng2);
+            (tx1,tx2) },
+                       |(tx1,tx2)| ZSwap::merge(&params, &[tx1.1, tx2.1], &mut rng).unwrap(),
+                       BatchSize::LargeInput));
+
 
     grp.finish();
 }

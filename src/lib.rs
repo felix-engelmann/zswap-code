@@ -12,5 +12,5 @@ pub mod zswap;
 
 pub use ota::OneTimeAccount;
 pub use protocol::{Attributes, ZSwap, ZSwapState};
-pub use zswap::{Transaction, ZSwapScheme};
+pub use zswap::{Transaction, ZSwapScheme,ZSwapInput, ZSwapOutput};
 pub type Fr = ::ark_bls12_381::Fr;
