@@ -138,6 +138,80 @@ where
     ) -> Result<(), SynthesisError>;
 }
 
+pub struct BasicPedersen<P: TEModelParameters>(pub PhantomData<P>);
+
+impl<P: TEModelParameters> BasicPedersen<P> {
+    fn generators() -> (GroupAffine<P>, GroupAffine<P>) {
+        let g = GroupAffine::<P>::prime_subgroup_generator();
+        let mut h = GroupAffine::<P>::new(Zero::zero(), Zero::zero());
+        while !h.is_on_curve() || !h.is_in_correct_subgroup_assuming_on_curve() || h == g {
+            h.x += P::BaseField::one();
+            if let Some(h2) = GroupAffine::get_point_from_x(h.x, true) {
+                h = h2
+            }
+        }
+        (g, h)
+    }
+}
+
+impl<P: TEModelParameters> HomComScheme<(), P::ScalarField, P::ScalarField> for BasicPedersen<P> {
+    type Com = GroupAffine<P>;
+    type TypeWitness = ();
+
+    fn commit(
+        (): &(),
+        v: &P::ScalarField,
+        r: &P::ScalarField,
+    ) -> (Self::Com, Self::TypeWitness) {
+        let (g, h) = Self::generators();
+        let com = g.mul(*r) + h.mul(*v);
+        (com.into_affine(), ())
+    }
+
+    fn verify(
+        (): &(),
+        (): &Self::TypeWitness,
+        v: &P::ScalarField,
+        r: &P::ScalarField,
+    ) -> Option<Self::Com> {
+        Some(Self::commit(&(), v, r).0)
+    }
+}
+
+impl<P: TEModelParameters> ParameterGadget<P::BaseField> for BasicPedersen<P> {
+    type ParametersVar = ();
+    fn allocate(_: impl Into<Namespace<P::BaseField>>) -> Result<Self::ParametersVar, SynthesisError> {
+        Ok(())
+    }
+}
+
+impl<P: TEModelParameters> HomComSchemeGadget<P::BaseField, (), NonNativeFieldVar<P::ScalarField, P::BaseField>, NonNativeFieldVar<P::ScalarField, P::BaseField>> for BasicPedersen<P>
+    where P::BaseField: PrimeField
+{
+    type ComVar = AffineVar<P, FpVar<P::BaseField>>;
+    type TypeWitnessVar = ();
+
+    fn verify(
+        (): &(),
+        (): &(),
+        (): &(),
+        v: &NonNativeFieldVar<P::ScalarField, P::BaseField>,
+        r: &NonNativeFieldVar<P::ScalarField, P::BaseField>,
+        com: &Self::ComVar,
+    ) -> Result<(), SynthesisError> {
+        let (g, h) = Self::generators();
+        let g = AffineVar::<P, FpVar<P::BaseField>>::new_constant( ns!(r.cs(), "g"), g)?;
+        let h = AffineVar::<P, FpVar<P::BaseField>>::new_constant( ns!(r.cs(), "h"), h)?;
+
+        let value_comm = h.scalar_mul_le(v.to_bits_le()?.iter())?;
+        // This could be more efficient: We don't need to compute the powers of g, we could provide
+        // them all as precomputed constants.
+        let randomness_term = g.scalar_mul_le(r.to_bits_le()?.iter())?;
+        (value_comm + randomness_term).enforce_equal(com)?;
+        Ok(())
+    }
+}
+
 pub struct MultiBasePedersen<P: TEModelParameters, H>(pub PhantomData<(P, H)>)
 where
     P::BaseField: PrimeField;

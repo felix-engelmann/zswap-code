@@ -47,8 +47,15 @@ type DpCryptoParameters = ::ark_sponge::poseidon::PoseidonParameters<DpF>;
 type DpCryptoParametersVar =
     ::ark_crypto_primitives::crh::poseidon::constraints::CRHParametersVar<DpF>;
 type DpMerkleTree = crate::poseidon::Poseidon;
+
+// NOTE: Switch out the below three definitions to run ignoring colors.
+macro_rules! maybe_notypes { ($exp:expr) => {$exp}; (type $ty:ty) => {$ty} }
 type DpHomComScheme = crate::primitives::MultiBasePedersen<DpG, crate::poseidon::Poseidon>;
 type DpHomComSchemeGadget = crate::primitives::MultiBasePedersenGadget<DpG, DpHash, DpHashGadget>;
+//macro_rules! maybe_notypes { ($exp:expr) => { () }; (type $ty:ty) => { () } }
+//type DpHomComScheme = crate::primitives::BasicPedersen<DpG>;
+//type DpHomComSchemeGadget = crate::primitives::BasicPedersen<DpG>;
+
 type DpSNARK = ::ark_groth16::Groth16<::ark_ec::models::bls12::Bls12<::ark_bls12_381::Parameters>>;
 
 pub type EmbeddedField = <DpG as ModelParameters>::ScalarField;
@@ -59,8 +66,8 @@ pub type MerkleTreeConfig = <DpMerkleTree as MerkleTreeParams<
 >>::Config;
 #[derive(Clone)]
 pub struct Proof(<DpSNARK as SNARK<DpF>>::Proof);
-type DpHomCom = <DpHomComScheme as HomComScheme<DpF, EmbeddedField, EmbeddedField>>::Com;
-type HomCom = <DpHomComScheme as HomComScheme<DpF, EmbeddedField, EmbeddedField>>::Com;
+type DpHomCom = <DpHomComScheme as HomComScheme<maybe_notypes!(type DpF), EmbeddedField, EmbeddedField>>::Com;
+type HomCom = <DpHomComScheme as HomComScheme<maybe_notypes!(type DpF), EmbeddedField, EmbeddedField>>::Com;
 
 impl Hash for Proof {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -493,13 +500,13 @@ impl ConstraintSynthesizer<DpF> for LangSpend {
             Ok(self.path)
         })?;
         let sk = SecretKeyVar(FpVar::new_witness(ns!(cs, "sk"), || Ok(self.sk))?);
-        let (_, type_wit) = DpHomComScheme::commit(&self.type_, &self.value, &self.rc);
+        let (_, type_wit) = DpHomComScheme::commit(&maybe_notypes!(self.type_), &self.value, &self.rc);
         let type_ = FpVar::new_witness(ns!(cs, "type"), || Ok(self.type_))?;
-        let type_wit =
+        let type_wit = maybe_notypes!(
             <DpHomComSchemeGadget as HomComSchemeGadget<_, _, _, _>>::TypeWitnessVar::new_witness(
                 ns!(cs, "type_wit"),
                 || Ok(type_wit),
-            )?;
+            )?);
         let value: EmbeddedField = self.value.into();
         let value = AllocatedNonNativeFieldVar::new_witness(ns!(cs, "value"), || Ok(value))?;
         Boolean::enforce_smaller_or_equal_than_le(&value.to_bits_le()?[..], &[u64::MAX])?;
@@ -519,9 +526,9 @@ impl ConstraintSynthesizer<DpF> for LangSpend {
         st.enforce_equal(&root2)?;
 
         // Commit check
-        DpHomComSchemeGadget::verify(
-            &params,
-            &attribs.type_,
+        <DpHomComSchemeGadget as HomComSchemeGadget<_, _, _, _>>::verify(
+            &maybe_notypes!(params),
+            &maybe_notypes!(attribs.type_),
             &type_wit,
             &attribs.value.into(),
             &rc,
@@ -569,13 +576,13 @@ impl ConstraintSynthesizer<DpF> for LangOutput {
         let msg = FpVar::new_input(ns!(cs, "msg"), || Ok(self.msg))?;
 
         let pk = FpVar::new_witness(ns!(cs, "pk"), || Ok(self.pk))?;
-        let (_, type_wit) = DpHomComScheme::commit(&self.type_, &self.value, &self.rc);
+        let (_, type_wit) = DpHomComScheme::commit(&maybe_notypes!(self.type_), &self.value, &self.rc);
         let type_ = FpVar::new_witness(ns!(cs, "type"), || Ok(self.type_))?;
-        let type_wit =
+        let type_wit = maybe_notypes!(
             <DpHomComSchemeGadget as HomComSchemeGadget<_, _, _, _>>::TypeWitnessVar::new_witness(
                 ns!(cs, "type_wit"),
                 || Ok(type_wit),
-            )?;
+            )?);
         let value: EmbeddedField = self.value.into();
         let value = AllocatedNonNativeFieldVar::new_witness(ns!(cs, "value"), || Ok(value))?;
         Boolean::enforce_smaller_or_equal_than_le(&value.to_bits_le()?[..], &[u64::MAX])?;
@@ -590,9 +597,9 @@ impl ConstraintSynthesizer<DpF> for LangOutput {
         note.enforce_equal(&note2)?;
 
         // Commit check
-        DpHomComSchemeGadget::verify(
-            &params,
-            &attribs.type_,
+        <DpHomComSchemeGadget as HomComSchemeGadget<_, _, _, _>>::verify(
+            &maybe_notypes!(params),
+            &maybe_notypes!(attribs.type_),
             &type_wit,
             &attribs.value.into(),
             &rc,
@@ -720,7 +727,7 @@ impl ZSwapScheme for ZSwap {
                 let t0 = Instant::now();
                 let rc = UniformRand::rand(rng);
                 let com = <DpHomComScheme as HomComScheme<_, _, _>>::commit(
-                    &From::from(input.4.type_),
+                    &maybe_notypes!(From::from(input.4.type_)),
                     &From::from(input.4.value),
                     &rc,
                 )
@@ -736,7 +743,7 @@ impl ZSwapScheme for ZSwap {
                 let t0 = Instant::now();
                 let rc = UniformRand::rand(rng);
                 let com = <DpHomComScheme as HomComScheme<_, _, _>>::commit(
-                    &From::from(output.3.type_),
+                    &maybe_notypes!(From::from(output.3.type_)),
                     &From::from(output.3.value),
                     &rc,
                 )
@@ -850,7 +857,7 @@ impl ZSwapScheme for ZSwap {
             .fold(com_one, |x, y| x + y);
 
         let com_rc: HomCom = DpHomComScheme::commit(
-            &<DpF as Zero>::zero(),
+            &maybe_notypes!(<DpF as Zero>::zero()),
             &<EmbeddedField as Zero>::zero(),
             &signature.randomness,
         )
@@ -861,7 +868,7 @@ impl ZSwapScheme for ZSwap {
             .iter()
             .map(|(type_, val)| {
                 DpHomComScheme::commit(
-                    &<DpF as From<u64>>::from(type_.clone()),
+                    &maybe_notypes!(<DpF as From<u64>>::from(type_.clone())),
                     &<EmbeddedField as From<i128>>::from(val.clone()),
                     &<EmbeddedField as Zero>::zero(),
                 )

@@ -220,7 +220,6 @@ fn main() {
     info!("\tdone");
     info!("merge verification");
     assert!(ZSwap::verify_tx(&params, &state, &tx4, &tx4_sig, &mut rng).unwrap());
-    assert_eq!(tx4.deltas[&BLUE], 0);
-    assert_eq!(tx4.deltas[&RED], 0);
+    assert!(tx4.deltas.is_empty());
     info!("\tdone");
 }

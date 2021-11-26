@@ -124,6 +124,7 @@ where
                 }
             }
         }
+        self.deltas.retain(|_, v| v != &0);
         self
     }
 }
