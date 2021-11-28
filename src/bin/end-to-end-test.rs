@@ -4,6 +4,8 @@ use rand::rngs::OsRng;
 use std::collections::HashMap;
 use tracing_subscriber::layer::SubscriberExt;
 use zswap::{Attributes, OneTimeAccount, Transaction, ZSwap, ZSwapScheme, ZSwapState};
+use std::time::Instant;
+
 #[macro_use]
 extern crate log;
 
@@ -215,8 +217,10 @@ fn main() {
     info!("\tdone");
 
     info!("tx merge");
+    let t0 = Instant::now();
     let tx4 = tx2.merge(tx3);
     let tx4_sig = ZSwap::merge(&params, &[tx2_sig, tx3_sig], &mut rng).unwrap();
+    info!("\tMerging signature and tx took {}μs", Instant::now().duration_since(t0).as_micros());
     info!("\tdone");
     info!("merge verification");
     assert!(ZSwap::verify_tx(&params, &state, &tx4, &tx4_sig, &mut rng).unwrap());
