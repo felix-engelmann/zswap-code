@@ -1,0 +1,23 @@
+diff --git a/src/protocol.rs b/src/protocol.rs
+index e91751a..e4b576d 100644
+--- a/src/protocol.rs
++++ b/src/protocol.rs
+@@ -49,12 +49,12 @@ type DpCryptoParametersVar =
+ type DpMerkleTree = crate::poseidon::Poseidon;
+ 
+ // NOTE: Switch out the below three definitions to run ignoring colors.
+-macro_rules! maybe_notypes { ($exp:expr) => {$exp}; (type $ty:ty) => {$ty} }
+-type DpHomComScheme = crate::primitives::MultiBasePedersen<DpG, crate::poseidon::Poseidon>;
+-type DpHomComSchemeGadget = crate::primitives::MultiBasePedersenGadget<DpG, DpHash, DpHashGadget>;
+-//macro_rules! maybe_notypes { ($exp:expr) => { () }; (type $ty:ty) => { () } }
+-//type DpHomComScheme = crate::primitives::BasicPedersen<DpG>;
+-//type DpHomComSchemeGadget = crate::primitives::BasicPedersen<DpG>;
++//macro_rules! maybe_notypes { ($exp:expr) => {$exp}; (type $ty:ty) => {$ty} }
++//type DpHomComScheme = crate::primitives::MultiBasePedersen<DpG, crate::poseidon::Poseidon>;
++//type DpHomComSchemeGadget = crate::primitives::MultiBasePedersenGadget<DpG, DpHash, DpHashGadget>;
++macro_rules! maybe_notypes { ($exp:expr) => { () }; (type $ty:ty) => { () } }
++type DpHomComScheme = crate::primitives::BasicPedersen<DpG>;
++type DpHomComSchemeGadget = crate::primitives::BasicPedersen<DpG>;
+ 
+ type DpSNARK = ::ark_groth16::Groth16<::ark_ec::models::bls12::Bls12<::ark_bls12_381::Parameters>>;
+ 
