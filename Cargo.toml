@@ -27,7 +27,7 @@ ark-snark = { version = "^0.3.0" }
 ark-groth16 = { version = "^0.3.0", features = ["std", "r1cs", "parallel"] }
 
 ark-crypto-primitives = { version = "^0.3.0", features = ["r1cs", "parallel"] }
-ark-sponge = { version = "^0.3.0", features = ["r1cs", "std"] }
+ark-sponge = { version = "^0.3.0", features = ["r1cs", "std"], rev = "51d6fc9a" }
 
 rand = "^0.8.4"
 lazy_static = "^1.4.0"
