@@ -1,5 +1,16 @@
 # zswap-code
 
+## Overview
+
+This repository contains a reference implementation for the paper "Zswap: zk-SNARK Based Non-Interactive Multi-Asset Swaps" which provides a mechanism for adding multi-asset support together with atomic swaps on top of zcash-like cryptocurrency.
+We also provide the benchmarks that measure the time of the main functions in zswap, such as generating and verifying proofs, or merging transactions.
+To run the benchmarks (for Zswap and Mock Sapling), see the sections below.
+For the purpose of comparison, we also include an implementation of Zcash, which we call "Mock Sapling" (since it has some differences from the original ZCash Sapling) -- to run the benchmarks for Mock Sapling, see the last section of this readme.
+
+
+## Building and Running
+
+
 To run the project on a UNIX-based system, you need a nightly version of [rust](https://rust-lang.org) installed. This can be done by first installing rust's toolchain manager, `rustup`, by following its [installation instructions](https://rust-lang.org/tools/install), and running the following in the repository directory:
 
 ```console
@@ -20,7 +31,7 @@ $ RUST_LOG=info cargo run --bin end-to-end-test --release
 
 Another way to run the timing tests is to use docker.
 
-Build the image with 
+Build the image with
 
 ```console
 $ sudo docker build . -t zswap
@@ -52,7 +63,7 @@ To reproduce the timing measurements used for the figure in the paper, first gen
 $ mkdir data
 $ for i in $(seq 30); do echo $i; RUST_LOG=info cargo +nightly run --release --bin end-to-end-test 2> data/run$i.log ; done
 ```
-    
+
 Then you can analyse them e.g. with the python script in `timings/stat.py`
 
 ```console
@@ -60,6 +71,16 @@ $ python3 timings/stat.py
 ```
 
 which outputs the median, min and max time for each measurement.
+
+## Measurements Description
+
+We measure duration of the following procedures:
+- Generating and verifying spend and output proofs (NIZK proofs attached to input nullifiers and output notes)
+- Creating commitments and verifying their homomorphic sum in the transaction -- we use vector Pedersen commitments with bases created as hashes of types.
+- Transaction assembly and randomness aggregation -- creating the transaction without the proofs (which are the heavy part).
+- Merging signatures and transactions -- performing the atomic swap itself -- is cheap because it amounts to concatenating transactions and summing the joint randomness.
+
+More details on the benchmarks can be found in `src/protocol.rs`.
 
 ## Mock sapling
 
