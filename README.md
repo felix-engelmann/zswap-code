@@ -1,7 +1,5 @@
 # zswap-code
 
-## Overview
-
 This repository contains a reference implementation for the paper "Zswap: zk-SNARK Based Non-Interactive Multi-Asset Swaps" which provides a mechanism for adding multi-asset support together with atomic swaps on top of zcash-like cryptocurrency.
 We also provide the benchmarks that measure the time of the main functions in zswap, such as generating and verifying proofs, or merging transactions.
 To run the benchmarks (for Zswap and Mock Sapling), see the sections below.
